@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test + selftest (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Node version (selftest ground truth)
+        run: node -v
+
+      - name: cargo test (corpus, 25 cases)
+        run: cargo test --all-targets
+
+      - name: spawnfate selftest — predictions vs real node spawns
+        run: cargo run --release -- selftest

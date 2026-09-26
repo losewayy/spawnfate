@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="640" viewBox="0 0 980 640">
+  <defs>
+    <style>
+      .t  { font: 13px/1.5 'Cascadia Code','Consolas',monospace; fill: #c9d1d9; }
+      .p  { fill: #7ee787; font-weight: bold; }
+      .h  { fill: #8b949e; }
+      .i  { fill: #79c0ff; }
+      .w  { fill: #e3b341; }
+      .f  { fill: #ff7b72; font-weight: bold; }
+      .v  { fill: #d2a8ff; font-weight: bold; }
+      .d  { fill: #6e7681; }
+    </style>
+  </defs>
+  <rect width="980" height="640" rx="8" fill="#0d1117"/>
+  <rect width="980" height="36" rx="8" fill="#161b22"/>
+  <rect y="28" width="980" height="8" fill="#161b22"/>
+  <circle cx="22" cy="18" r="6" fill="#ff5f57"/>
+  <circle cx="42" cy="18" r="6" fill="#febc2e"/>
+  <circle cx="62" cy="18" r="6" fill="#28c840"/>
+  <text x="490" y="22" text-anchor="middle" class="t" fill="#8b949e">spawnfate — command-line fate, before it happens</text>
+
+  <!-- run 1 -->
+  <text x="24" y="62"  class="t"><tspan class="p">$</tspan> spawnfate npx -v</text>
+  <text x="24" y="86"  class="t"><tspan class="h">== resolution ==</tspan></text>
+  <text x="24" y="106" class="t">  resolved: (none)</text>
+  <text x="24" y="126" class="t"><tspan class="h">== findings ==</tspan></text>
+  <text x="24" y="146" class="t"><tspan class="i">[info]</tspan> Resolve R1.14/R1.15: "C:\…\nodejs-lts\current\npx" exists but is</text>
+  <text x="24" y="166" class="t">        <tspan class="d">invisible to libuv's resolver (no extension, not .com/.exe) — NOT a candidate</tspan></text>
+  <text x="24" y="186" class="t"><tspan class="f">[FATAL]</tspan> Resolve R1.14: libuv tried 156 candidates, none exist — ENOENT</text>
+  <text x="24" y="206" class="t"><tspan class="h">== verdict ==</tspan></text>
+  <text x="24" y="226" class="t"><tspan class="f">  DIES at Resolve: FileNotFound</tspan></text>
+  <text x="24" y="252" class="t" fill="#8b949e" font-style="italic">  the shim is right there on PATH — but libuv never even looks for it</text>
+
+  <!-- divider -->
+  <line x1="24" y1="276" x2="956" y2="276" stroke="#21262d" stroke-width="1"/>
+
+  <!-- run 2 -->
+  <text x="24" y="304" class="t"><tspan class="p">$</tspan> spawnfate --shell npx -v</text>
+  <text x="24" y="328" class="t"><tspan class="h">== resolution ==</tspan></text>
+  <text x="24" y="348" class="t">  resolved: C:\…\nodejs-lts\current\npx</text>
+  <text x="24" y="368" class="t"><tspan class="h">== serialized command line ==</tspan></text>
+  <text x="24" y="388" class="t">  "C:\WINDOWS\system32\cmd.exe" /d /s /c "npx -v"</text>
+  <text x="24" y="408" class="t"><tspan class="h">== after cmd re-parse ==</tspan></text>
+  <text x="24" y="428" class="t">  npx -v</text>
+  <text x="24" y="448" class="t"><tspan class="h">== findings ==</tspan></text>
+  <text x="24" y="468" class="t"><tspan class="w">[warn]</tspan> Serialize R1.9: shell:true joins args RAW — DEP0190 territory</text>
+  <text x="24" y="488" class="t"><tspan class="i">[info]</tspan> CmdParse R2.3: /s strips outer quotes → effective: npx -v</text>
+  <text x="24" y="508" class="t"><tspan class="i">[info]</tspan> Resolve R1.16: cmd re-resolves "npx" → C:\…\nodejs-lts\current\npx</text>
+  <text x="24" y="528" class="t"><tspan class="w">[warn]</tspan> Exec R0.5: not a PE — cmd will try it as batch text</text>
+  <text x="24" y="548" class="t"><tspan class="h">== verdict ==</tspan></text>
+  <text x="24" y="568" class="t"><tspan class="v">  RUNS — target argv: ["npx", "-v"]</tspan></text>
+  <text x="24" y="594" class="t" fill="#8b949e" font-style="italic">  same name, different resolver, different fate — cmd finds the bash shim</text>
+
+  <!-- footer strip -->
+  <rect x="24" y="610" width="932" height="1" fill="#21262d"/>
+  <text x="24" y="630" class="t" fill="#6e7681">three resolvers, three fates — spawnfate shows all of them, before you run</text>
+</svg>

@@ -1,6 +1,10 @@
 # spawnfate
 
+[![CI](https://github.com/losewayy/spawnfate/actions/workflows/ci.yml/badge.svg)](https://github.com/losewayy/spawnfate/actions/workflows/ci.yml)
+
 **Predict the fate of a Windows command line before you spawn it.**
+
+<p align="center"><img src="docs/demo.svg" width="980" alt="spawnfate demo: npx dies ENOENT under spawn, but --shell routes through cmd and finds a bash shim"/></p>
 
 Every process-spawn API on Windows funnels through layers that don't agree with
 each other: the caller serializes argv one way, name resolution probes the
