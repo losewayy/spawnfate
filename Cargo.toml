@@ -1,0 +1,22 @@
+[package]
+name = "spawnfate"
+version = "0.1.0"
+edition = "2021"
+description = "Predict the fate of a Windows command line before you spawn it — layered simulation of name resolution, argv serialization, cmd.exe re-parsing, and target argv parsing."
+license = "MIT OR Apache-2.0"
+keywords = ["windows", "spawn", "command-line", "cmd", "argv"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+
+[[bin]]
+name = "spawnfate"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_norway = "0.9.42"
+
+[dev-dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_norway = "0.9.42"

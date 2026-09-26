@@ -1,0 +1,325 @@
+# spawnfate conformance corpus — the language-agnostic golden set.
+#
+# Every case states: the machine (env + declared files), the call (input),
+# and the expected fate (expect). `rules:` cites spec-v0.md rule ids;
+# `source:` cites the real-world incident or the test suite a vector came from.
+#
+# Schema:
+#   id, title, rules?, source?
+#   env:  cwd?, path?, pathext?, comspec?, app_dir?, system32?, windows_dir?,
+#         no_cd_in_exe_path?, delayed_expansion?, node_bat_guard?,
+#         files: [{path, pe?}]
+#   input: {producer: node|raw, file, args?, shell: none|cmd|<path>}
+#   target?: msvcrt|cltavw|go|batch
+#   expect: {verdict: runs|dies|unsafe, error?, layer?, resolved_contains?,
+#            argv?, command_line?, cmd_effective?, notes_contain?, notes_rule?}
+
+cases:
+
+  # ── Layer 0: three resolvers, three fates ────────────────────────────────
+
+  - id: node-npx-enoent
+    title: spawn('npx') dies ENOENT — libuv never probes .cmd or the bare name
+    rules: [R1.14, R1.15]
+    source: https://github.com/MoonshotAI/kimi-code/issues/3236
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx', pe: false}
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+        - {path: 'C:\tools\nodejs\node.exe', pe: true}
+    input: {producer: node, file: npx, args: ['-v'], shell: none}
+    expect:
+      verdict: dies
+      error: FileNotFound
+      layer: Resolve
+      notes_contain: ["invisible to libuv's resolver"]
+
+  - id: node-npx-cmd-einval
+    title: spawn('npx.cmd') throws EINVAL synchronously — CVE-2024-27980 gate
+    rules: [R1.11, R1.12]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+    input: {producer: node, file: npx.cmd, shell: none}
+    expect:
+      verdict: dies
+      error: EinvalBatch
+      layer: Serialize
+
+  - id: node-explicit-sh-193
+    title: spawn('npx.sh') is probed literally, found, then ERROR_BAD_EXE_FORMAT
+    rules: [R1.14, R0.5]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx.sh'}
+    input: {producer: node, file: npx.sh, shell: none}
+    expect:
+      verdict: dies
+      error: BadExeFormat
+      layer: Exec
+
+  - id: node-exe-plain-run
+    title: spawn('node', ['-v']) resolves node.exe and runs clean
+    rules: [R1.14, R1.3]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\node.exe', pe: true}
+    input: {producer: node, file: node, args: ['-v'], shell: none}
+    expect:
+      verdict: runs
+      argv: ['node', '-v']
+
+  - id: cwd-plant-shadows-path
+    title: a malicious tool.exe in CWD beats PATH — libuv probes CWD first
+    rules: [R1.14]
+    env:
+      cwd: C:\work
+      path: ['C:\tools']
+      files:
+        - {path: 'C:\work\tool.exe', pe: true}
+        - {path: 'C:\tools\tool.exe', pe: true}
+    input: {producer: node, file: tool, args: [], shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: C:\work\tool.exe
+
+  - id: cmd-resolver-sees-pathext
+    title: cmd /c re-resolution finds npx.cmd via PATHEXT (what saves shell:true)
+    rules: [R1.16, R2.3]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+        - {path: 'C:\Windows\System32\cmd.exe', pe: true}
+    input: {producer: node, file: npx, args: ['-v'], shell: cmd}
+    expect:
+      verdict: runs
+      resolved_contains: npx.cmd
+      cmd_effective: "npx -v"
+
+  - id: cmd-bare-shim-shadows-cmd-ext
+    title: cmd tries the extensionless name FIRST — a bash shim shadows npx.cmd
+    rules: [R1.16]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx'}     # scoop bash shim
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+    input: {producer: node, file: npx, args: [], shell: cmd}
+    expect:
+      verdict: runs
+      resolved_contains: 'C:\tools\nodejs\npx'
+      notes_contain: ["not a PE"]
+
+  - id: createprocess-appdir-beats-cwd
+    title: CreateProcess searches the app dir BEFORE CWD (different order!)
+    rules: [R0.3]
+    env:
+      cwd: C:\work
+      app_dir: C:\prog
+      path: ['C:\tools']
+      files:
+        - {path: 'C:\prog\tool.exe', pe: true}
+        - {path: 'C:\work\tool.exe', pe: true}
+    input: {producer: raw, file: "tool arg", shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: C:\prog\tool.exe
+
+  # ── Layer 1: serialization round-trips (CPython-style vectors) ───────────
+
+  - id: quote-simple-spaces
+    title: "args 'a b c', 'd', 'e' → quoted form — the textbook case"
+    rules: [R1.3]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['a b c', 'd', 'e'], shell: none}
+    expect:
+      verdict: runs
+      command_line: 'prog "a b c" d e'
+      argv: ['prog', 'a b c', 'd', 'e']
+
+  - id: quote-inner-quote
+    title: arg with an inner quote → backslash-escaped
+    rules: [R1.2, R1.3]
+    source: CPython test_list2cmdline family
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['ab"c', '\', 'd'], shell: none}
+    expect:
+      verdict: runs
+      argv: ['prog', 'ab"c', '\', 'd']
+
+  - id: quote-trailing-backslash
+    title: "trailing-backslash arg 'C:\\My Dir\\' — the classic swallow bug, quoted safely"
+    rules: [R1.2, R1.3]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['C:\My Dir\'], shell: none}
+    expect:
+      verdict: runs
+      command_line: 'prog "C:\My Dir\\"'
+      argv: ['prog', 'C:\My Dir\']
+
+  - id: quote-backslash-run-before-quote
+    title: "arg a\\\"b needs a\\\"b serialization"
+    rules: [R1.2]
+    source: CPython test_list2cmdline family
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['a\"b', 'c'], shell: none}
+    expect:
+      verdict: runs
+      argv: ['prog', 'a\"b', 'c']
+
+  - id: quote-empty-arg
+    title: empty arg serializes to "" and reads back empty
+    rules: [R1.3]
+    source: CPython test_list2cmdline family
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['ok', ''], shell: none}
+    expect:
+      verdict: runs
+      argv: ['prog', 'ok', '']
+
+  # ── Layer 2: cmd.exe re-parse ────────────────────────────────────────────
+
+  - id: cmd-s-strips-outer-quotes
+    title: /s forces the strip-first-and-last-quote branch
+    rules: [R2.3]
+    env:
+      files:
+        - {path: 'C:\Windows\System32\cmd.exe', pe: true}
+        - {path: 'C:\work\tool.exe', pe: true}
+    input: {producer: node, file: tool, args: ['a b', 'c'], shell: cmd}
+    expect:
+      verdict: runs
+      cmd_effective: "tool a b c"
+
+  - id: cmd-metachar-injection
+    title: "an & in an arg is live under shell:true — a command separator"
+    rules: [R2.9]
+    env:
+      files: [{path: 'C:\Windows\System32\cmd.exe', pe: true}]
+      path: ['C:\Windows\System32']
+    input: {producer: node, file: echo, args: ['ok', '&', 'calc'], shell: cmd}
+    expect:
+      notes_rule: ['R2.9']
+
+  - id: cmd-percent-expansion
+    title: "%PATH% expands at /c parse time — quoting does not protect it"
+    rules: [R2.6]
+    env:
+      files: [{path: 'C:\Windows\System32\cmd.exe', pe: true}]
+      path: ['C:\Windows\System32']
+    input: {producer: node, file: echo, args: ['%PATH%'], shell: cmd}
+    expect:
+      notes_rule: ['R2.6']
+
+  - id: cmd-delayed-off-bang-literal
+    title: "!x! is literal when delayed expansion is off"
+    rules: [R2.7]
+    env:
+      delayed_expansion: false
+      files: [{path: 'C:\Windows\System32\cmd.exe', pe: true}]
+      path: ['C:\Windows\System32']
+    input: {producer: node, file: echo, args: ['!x!'], shell: cmd}
+    expect:
+      verdict: runs
+      notes_absent: ['R2.7']
+
+  - id: cmd-delayed-on-bang-expands
+    title: "!x! expands when delayed expansion is on"
+    rules: [R2.7]
+    env:
+      delayed_expansion: true
+      files: [{path: 'C:\Windows\System32\cmd.exe', pe: true}]
+      path: ['C:\Windows\System32']
+    input: {producer: node, file: echo, args: ['!x!'], shell: cmd}
+    expect:
+      notes_rule: ['R2.7']
+
+  - id: cmd-newline-injection
+    title: a newline in an arg splits into a second command
+    rules: [R2.8]
+    source: cross-spawn#179 class
+    env:
+      files: [{path: 'C:\Windows\System32\cmd.exe', pe: true}]
+      path: ['C:\Windows\System32']
+    input: {producer: node, file: echo, args: ["hi\n& calc"], shell: cmd}
+    expect:
+      notes_rule: ['R2.8']
+
+  # ── Layer 4: target parser divergence ────────────────────────────────────
+
+  - id: l4-double-quote-msvcrt
+    title: "\"a\"\"b c\" reads back as one arg a\"b c under post-2008 MSVCRT"
+    rules: [R1.4]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: prog, args: ['a"b c'], shell: none}
+    target: msvcrt
+    expect:
+      verdict: runs
+      argv: ['prog', 'a"b c']
+
+  - id: l4-go-divergence
+    title: "raw line with literal a\"\"b c — Go reads two args where MSVCRT reads one"
+    rules: [R1.4]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: raw, file: 'prog "a""b c"', shell: none}
+    target: go
+    expect:
+      verdict: runs
+      argv: ['prog', 'a"b', 'c']
+
+  - id: l4-msvcrt-same-line
+    title: "same raw line under MSVCRT reads one arg"
+    rules: [R1.4]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: raw, file: 'prog "a""b c"', shell: none}
+    target: msvcrt
+    expect:
+      verdict: runs
+      argv: ['prog', 'a"b c']
+
+  # ── Raw CreateProcess mode ───────────────────────────────────────────────
+
+  - id: raw-quoted-exe-spaces
+    title: "quoted exe path resolves and runs"
+    rules: [R0.2]
+    env:
+      files:
+        - {path: 'C:\Program Files\tool.exe', pe: true}
+    input: {producer: raw, file: '"C:\Program Files\tool.exe" /x', shell: none}
+    expect:
+      verdict: runs
+      argv: ['C:\Program Files\tool.exe', '/x']
+
+  - id: raw-unquoted-spaces-warn
+    title: unquoted space path triggers the successive-NUL probe warning
+    rules: [R0.2]
+    env:
+      files:
+        - {path: 'C:\work\tool.exe', pe: true}
+    input: {producer: raw, file: 'C:\work\tool.exe /x', shell: none}
+    expect:
+      verdict: runs
+      notes_rule: ['R0.2']
+
+  - id: raw-bat-implicit-cmd
+    title: "setup.cmd /q — CreateProcess silently substitutes System32 cmd.exe"
+    rules: [R0.4]
+    env:
+      files:
+        - {path: 'C:\work\setup.cmd'}
+    input: {producer: raw, file: 'setup.cmd /q', shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: setup.cmd
+      notes_rule: ['R0.4']
