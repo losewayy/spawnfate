@@ -323,3 +323,29 @@ cases:
       verdict: runs
       resolved_contains: setup.cmd
       notes_rule: ['R0.4']
+
+  # ── BatBadBut: unserializable argv ───────────────────────────────────────
+
+  - id: batbadbut-quote-in-arg
+    title: "shell:true to a .cmd with a quoted arg — CVE-2024-24576 class"
+    rules: [R2.11, R1.16]
+    env:
+      files:
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+        - {path: 'C:\Windows\System32\cmd.exe', pe: true}
+      path: ['C:\tools\nodejs']
+    input: {producer: node, file: npx, args: ['pkg "with space"'], shell: cmd}
+    expect:
+      verdict: unsafe
+      notes_rule: ['R2.11']
+
+  - id: einval-suggests-comspec
+    title: EINVAL verdict carries the route-via-comspec prescription
+    rules: [R1.11]
+    env:
+      files: [{path: 'C:\tools\nodejs\npx.cmd'}]
+      path: ['C:\tools\nodejs']
+    input: {producer: node, file: npx.cmd, shell: none}
+    expect:
+      verdict: dies
+      error: EinvalBatch

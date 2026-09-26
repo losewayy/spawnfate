@@ -191,6 +191,12 @@ fn print_report(r: &Report) {
         };
         println!("  [{tag}] {:?} {}: {}", n.layer, n.rule, n.message);
     }
+    if !r.suggestions.is_empty() {
+        println!("== prescription ==");
+        for sg in &r.suggestions {
+            println!("  → {}", sg.text);
+        }
+    }
     println!("== verdict ==");
     match &r.verdict {
         Verdict::Runs { argv } => {

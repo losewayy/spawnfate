@@ -148,6 +148,14 @@ pub enum TargetParser {
     Batch,
 }
 
+/// A concrete remediation — what the README calls the prescription.
+#[derive(Debug, Clone, Serialize)]
+pub struct Suggestion {
+    /// Stable id for corpus assertions.
+    pub id: &'static str,
+    pub text: String,
+}
+
 /// The full answer.
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -159,4 +167,6 @@ pub struct Report {
     pub cmd_effective: Option<String>,
     pub notes: Vec<Note>,
     pub verdict: Verdict,
+    /// Actionable fixes, ordered by preference. Empty when none applies.
+    pub suggestions: Vec<Suggestion>,
 }

@@ -142,6 +142,10 @@ fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String>
         (Verdict::Dies { error, layer }, Observed::Exit(Some(c))) => {
             Err(format!("predicted dies@{layer:?}/{error:?}, observed exit {c}"))
         }
+        // UnsafeUnserializable: the child DOES run — the claim is that argv
+        // can't arrive intact. Verdict-level check accepts Exit; fidelity is
+        // verified by argv-level compare (printargv, v0.2).
+        (Verdict::UnsafeUnserializable, Observed::Exit(_)) => Ok(()),
         (a, b) => Err(format!("predicted {a:?}, observed {b:?}")),
     }
 }

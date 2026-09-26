@@ -24,6 +24,7 @@ use serialize::{node_command_line, NodeLine};
 /// `target` as the assumed argv parser of the spawned program (L4).
 pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser) -> Report {
     let mut notes: Vec<Note> = Vec::new();
+    let mut suggestions: Vec<Suggestion> = Vec::new();
     let mut resolved = None;
     let mut command_line = None;
     let mut cmd_effective = None;
@@ -44,11 +45,15 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             input.file
                         ),
                     });
+                    suggestions.push(Suggestion {
+                        id: "route-via-comspec",
+                        text: "route the batch file through %ComSpec%: spawn(env.ComSpec, ['/d','/s','/c', cmdEscapedLine]) — or set {shell:true} accepting the raw-join caveats (R1.9)".into(),
+                    });
                     verdict = Verdict::Dies {
                         layer: Layer::Serialize,
                         error: Error::EinvalBatch,
                     };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict };
+                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                 }
                 // R1.14: libuv's resolver — .com/.exe only, never the bare
                 // name, never PATHEXT.
@@ -74,11 +79,15 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                                 res.tried.len()
                             ),
                         });
+                        suggestions.push(Suggestion {
+                            id: "self-resolve-pathext",
+                            text: "libuv's table only tries .com/.exe — resolve the name yourself (PATH+PATHEXT walk incl. .cmd), then spawn the resolved .exe directly or route .cmd via ComSpec".into(),
+                        });
                         verdict = Verdict::Dies {
                             layer: Layer::Resolve,
                             error: Error::FileNotFound,
                         };
-                        return Report { resolved, command_line, cmd_effective, notes, verdict };
+                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                     }
                     Some(path) => {
                         resolved = Some(path.clone());
@@ -93,11 +102,15 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                                     "\"{path}\" is not a PE image and not a batch file — CreateProcess fails ERROR_BAD_EXE_FORMAT (193), not ENOENT"
                                 ),
                             });
+                            suggestions.push(Suggestion {
+                                id: "not-a-pe",
+                                text: "the resolved file exists but isn't a PE — likely a POSIX shim or data file. Check `where <name>` and point at the real executable".into(),
+                            });
                             verdict = Verdict::Dies {
                                 layer: Layer::Exec,
                                 error: Error::BadExeFormat,
                             };
-                            return Report { resolved, command_line, cmd_effective, notes, verdict };
+                            return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                         }
                         notes.push(Note {
                             layer: Layer::Resolve,
@@ -129,6 +142,22 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     })
                     .unwrap_or(false);
                 if is_batch {
+                    // BatBadBut (R2.11): a '"' in any arg cannot be serialized
+                    // safely for a batch target — no escaping exists.
+                    if let Some(bad) = input.args.iter().find(|a| a.contains('"')) {
+                        notes.push(Note {
+                            layer: Layer::Serialize,
+                            severity: Severity::Fatal,
+                            rule: "R2.11",
+                            message: format!("arg {bad:?} contains a double-quote — inescapable inside cmd's batch quoting (CVE-2024-24576 class)"),
+                        });
+                        suggestions.push(Suggestion {
+                            id: "batbadbut",
+                            text: "pass the value via an environment variable or a temp file, or replace the batch target with a real binary".into(),
+                        });
+                        verdict = Verdict::UnsafeUnserializable;
+                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                    }
                     notes.push(Note {
                         layer: Layer::Resolve,
                         severity: Severity::Warn,
@@ -148,7 +177,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     let mut full = vec![input.file.clone()];
                     full.extend(argv);
                     verdict = Verdict::Runs { argv: full };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict };
+                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                 }
                 let argv = split(&cl, target);
                 // Round-trip check: argv[1..] must equal input.args under the
@@ -177,6 +206,10 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     severity: Severity::Warn,
                     rule: "R1.9",
                     message: "shell:true joins args RAW — no escaping — then wraps in one quote pair (DEP0190 territory)".into(),
+                });
+                suggestions.push(Suggestion {
+                    id: "avoid-raw-join",
+                    text: "prefer explicit ComSpec routing with per-arg cmd escaping over {shell:true}'s raw join".into(),
                 });
                 resolved = Some(env.comspec.clone());
                 command_line = Some(format!("\"{}\" {}", env.comspec, tail));
@@ -217,7 +250,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     verdict = Verdict::Runs {
                         argv: vec![first],
                     };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict };
+                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                 }
                 let res = resolve_cmd(&first, env, fs);
                 match &res.found {
@@ -240,6 +273,22 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             });
                         }
                         let rest = eff[first.len()..].trim_start().to_string();
+                        if is_batch {
+                            if let Some(bad) = input.args.iter().find(|a| a.contains('"')) {
+                                notes.push(Note {
+                                    layer: Layer::Serialize,
+                                    severity: Severity::Fatal,
+                                    rule: "R2.11",
+                                    message: format!("arg {bad:?} contains a double-quote — inescapable under batch re-tokenization (CVE-2024-24576 class)"),
+                                });
+                                suggestions.push(Suggestion {
+                                    id: "batbadbut",
+                                    text: "pass the value via an environment variable or a temp file, or replace the batch target with a real binary".into(),
+                                });
+                                verdict = Verdict::UnsafeUnserializable;
+                                return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                            }
+                        }
                         let argv = if is_batch {
                             split(&rest, TargetParser::Batch)
                         } else {
@@ -314,7 +363,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             layer: Layer::Exec,
                             error: Error::BadExeFormat,
                         };
-                        return Report { resolved, command_line, cmd_effective, notes, verdict };
+                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                     }
                     let argv = split(line, target);
                     verdict = Verdict::Runs { argv };
@@ -335,6 +384,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
         cmd_effective,
         notes,
         verdict,
+        suggestions,
     }
 }
 
