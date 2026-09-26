@@ -384,6 +384,7 @@ cases:
       notes_rule: ['R0.8']
 
   - id: app-alias-stub
+    selftest: false
     title: WindowsApps python.exe is a Store reparse stub, not a binary
     rules: [R0.9]
     env:

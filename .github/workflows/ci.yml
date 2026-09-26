@@ -21,5 +21,8 @@ jobs:
       - name: cargo test (corpus, 25 cases)
         run: cargo test --all-targets
 
+      - name: Build release binaries incl. printargv probe
+        run: cargo build --release --bins
+
       - name: spawnfate selftest — predictions vs real node spawns
-        run: cargo run --release -- selftest
+        run: ./target/release/spawnfate.exe selftest

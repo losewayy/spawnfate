@@ -32,7 +32,7 @@ try {
 cp.on('error', e => { console.log('ERR ' + (e.code || e.errno || e.message)); process.exit(0); });
 let out = '';
 if (cp.stdout) cp.stdout.on('data', d => out += d);
-cp.on('exit', (c, s) => console.log('EXIT ' + c + ' sig=' + s));
+cp.on('exit', (c, s) => { console.log('EXIT ' + c + ' sig=' + s); if (out) console.log('CHILDOUT ' + JSON.stringify(out)); });
 setTimeout(() => { console.log('TIMEOUT'); process.exit(42); }, 8000).unref();
 "#;
 
@@ -61,24 +61,44 @@ fn materialize(case: &Case, env: &Env, root: &Path) {
         }
         let lower = f.path.to_ascii_lowercase();
         if f.pe {
-            // A real PE: clone the smallest real exe we have.
-            let donor = Path::new(r"C:\Windows\System32\hostname.exe");
-            if donor.exists() {
-                std::fs::copy(donor, &dst).unwrap();
+            // A real PE that REPORTS ITS ARGV — the gold standard: selftest
+            // can now verify what the child actually received, not just that
+            // it ran. printargv.exe lives beside the spawnfate binary.
+            let probe = printargv_probe();
+            if probe.exists() {
+                std::fs::copy(&probe, &dst).unwrap();
             } else {
-                std::fs::write(&dst, "MZ").unwrap();
+                std::fs::copy(r"C:\Windows\System32\hostname.exe", &dst)
+                    .map(|_| ()).or_else(|_| std::fs::write(&dst, "MZ"))
+                    .unwrap();
             }
         } else if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-            std::fs::write(&dst, "@exit /b 0\r\n").unwrap();
+            std::fs::write(&dst, "@echo BATARGV=%*
+@exit /b 0
+").unwrap();
         } else {
-            std::fs::write(&dst, "not a PE\n").unwrap();
+            std::fs::write(&dst, "not a PE
+").unwrap();
         }
     }
 }
 
+/// printargv.exe — sibling bin in the same cargo profile dir.
+fn printargv_probe() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let dir = exe.parent().unwrap().to_path_buf();
+    let local = dir.join("printargv.exe");
+    if !local.exists() {
+        // ask cargo to build it — selftest is a dev-mode command
+        let _ = Command::new("cargo").args(["build", "--bin", "printargv"]).status();
+    }
+    local
+}
+
 #[derive(Debug, PartialEq)]
 enum Observed {
-    Exit(Option<i32>),
+    /// exit code + last child stdout payload (ARGVPAYLOAD/BATARGV lines)
+    Exit(Option<i32>, Option<String>),
     Err(String),
     Timeout,
 }
@@ -112,7 +132,11 @@ fn spawn_real(case: &Case, env: &Env, root: &Path, harness: &Path) -> Observed {
             .split_whitespace()
             .next()
             .and_then(|s| s.parse::<i32>().ok());
-        return Observed::Exit(code);
+        let payload = text
+            .lines()
+            .find(|l| l.starts_with("CHILDOUT "))
+            .map(|l| l[9..].to_string());
+        return Observed::Exit(code, payload);
     }
     if text.contains("TIMEOUT") {
         return Observed::Timeout;
@@ -124,9 +148,37 @@ fn spawn_real(case: &Case, env: &Env, root: &Path, harness: &Path) -> Observed {
 fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String> {
     let shell = case.input.shell != "none";
     match (verdict, obs) {
-        (Verdict::Runs { .. }, Observed::Exit(_)) => Ok(()),
+        (Verdict::Runs { argv }, Observed::Exit(_, payload)) => {
+            // argv-level verification when the probe reported back
+            if let Some(p) = payload {
+                // CHILDOUT is a JSON-encoded string — decode it first.
+                let text = serde_json::from_str::<String>(p).unwrap_or_else(|_| p.clone());
+                for l in text.split(['\r', '\n']) {
+                    if let Some(json) = l.strip_prefix("ARGVPAYLOAD") {
+                        match serde_json::from_str::<Vec<String>>(json) {
+                            Ok(real) => {
+                                let want: Vec<String> = argv.iter().skip(1).cloned().collect();
+                                let got: Vec<String> = real.iter().skip(1).cloned().collect();
+                                if want != got {
+                                    return Err(format!("argv mismatch — predicted {want:?}, child received {got:?}"));
+                                }
+                            }
+                            Err(e) => return Err(format!("ARGVPAYLOAD unparsable: {e} — {json:?}")),
+                        }
+                    }
+                    if let Some(tail) = l.strip_prefix("BATARGV=") {
+                        let want = case.input.args.join(" ");
+                        let got = tail.trim().to_string();
+                        if want != got {
+                            return Err(format!("batch %* mismatch — predicted {want:?}, cmd saw {got:?}"));
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         // Inside cmd, a resolution failure surfaces as exit≠0, not a spawn err.
-        (Verdict::Dies { layer: Layer::Resolve, .. }, Observed::Exit(Some(c)))
+        (Verdict::Dies { layer: Layer::Resolve, .. }, Observed::Exit(Some(c), _))
             if shell && *c != 0 => Ok(()),
         (Verdict::Dies { error: Error::FileNotFound, .. }, Observed::Err(e))
             if e.contains("ENOENT") => Ok(()),
@@ -139,13 +191,13 @@ fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String>
         (Verdict::Runs { .. }, Observed::Err(e)) => {
             Err(format!("predicted runs, observed spawn error {e}"))
         }
-        (Verdict::Dies { error, layer }, Observed::Exit(Some(c))) => {
+        (Verdict::Dies { error, layer }, Observed::Exit(Some(c), _)) => {
             Err(format!("predicted dies@{layer:?}/{error:?}, observed exit {c}"))
         }
         // UnsafeUnserializable: the child DOES run — the claim is that argv
         // can't arrive intact. Verdict-level check accepts Exit; fidelity is
         // verified by argv-level compare (printargv, v0.2).
-        (Verdict::UnsafeUnserializable, Observed::Exit(_)) => Ok(()),
+        (Verdict::UnsafeUnserializable, Observed::Exit(..)) => Ok(()),
         (a, b) => Err(format!("predicted {a:?}, observed {b:?}")),
     }
 }
