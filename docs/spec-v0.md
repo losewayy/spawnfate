@@ -29,6 +29,10 @@
 - **R0.3** [DOC] 裸名搜索顺序：父进程目录 → 父进程 CWD → System32 → 16位 System → Windows 目录 → PATH 逐条。每步先试裸名再试 `name.exe`。无 PATHEXT、无 App Paths。
 - **R0.4** [DOC/MSRC] 解析到 `.bat`/`.cmd` 时 CreateProcess **隐式换成 system32\cmd.exe** 并把批文件（连同原命令线）交给 cmd——MS14-019 之后恒用系统目录 cmd。cmd 命令线的精确重组方式 **[UNC — 语料库必测项]**。
 - **R0.5** [DOC] 错误面：找不到文件 → `ERROR_FILE_NOT_FOUND`（Node 侧 ENOENT）；找到但不是 PE 也不是批类型 → `ERROR_BAD_EXE_FORMAT`(193)。**存在但不可执行的文件不是 ENOENT，是 193**——`.txt`/`.sh` 显式启动会走这个分支。[EMP Node v24 实测：libuv 把 193 映射为 `EFTYPE`（inappropriate file type），spawn 报 `spawn EFTYPE`]
+- **R0.6** [EMP] 路径词法规范化在每个组件上独立生效：`/`→`\`、`.`/`..` 词法消解（libuv 限定名照样吃扩展名试探——`spawn('./prog')` 实测命中 `prog.exe`）。
+- **R0.7** [DOC/EMP] **尾点/尾空格剥离（CVE-2024-43402 面）**：Windows 对每组件剥尾部 `.`/` `——`evil.cmd.` 与 `evil.cmd` 是同一文件。早期 Node guard 用 `endsWith('.cmd')` 判定批文件，`evil.cmd.` 绕开；**v24 实测 `spawn('./tt.cmd.')` 仍 EINVAL**——修复后的 guard 先规范化再查后缀。规范化的 resolved 路径上判批类型是本工具的正确姿势。
+- **R0.8** [DOC] DOS 保留设备名（`NUL`/`CON`/`AUX`/`PRN`/`COM1-9`/`LPT1-9`，含带扩展名形态 `con.txt`）通过 DOS 设备命名空间"存在"于每台机器——`CreateFile("nul")` 随处成功，但其中没有可 spawn 的 PE。预测：解析器可见、193 级失败。
+- **R0.9** [DOC] **App Execution Alias**：`%LOCALAPPDATA%\Microsoft\WindowsApps\*.exe` 是 reparse point 占位符（FILE_ATTRIBUTE_REPARSE_POINT 0x400），OS loader 解析别名目标——装了应用则启动真身，没装则跳商店页。**单凭文件无法判定命运** [UNC]；建议处方：关 Settings→Apps→App execution aliases 或指向真安装路径。
 
 ## Layer 1 — 生产者序列化（argv → 命令线）
 
@@ -57,7 +61,7 @@
 ### 1d. 三解析器细则（见设计公理 3 表格 + R0.3 / R1.14 / R1.16）
 
 - **R1.14** [SRC] libuv `search_path`：file 含 `\/:` → 不搜 PATH 只按 CWD 相对解；裸名 → **CWD 优先**再 PATH 逐条；有扩展名 → 先试原名再 `.com`/`.exe`；无扩展名 → **只试 `.com`/`.exe`**。不查可执行性——第一个存在的文件赢，CreateProcess 失败不回表继续找。`UV_PROCESS_WINDOWS_FILE_PATH_EXACT_NAME` 在有目录成分时先按原名试。
-- **R1.15** [推导] 推论：`spawn('npx')` 撞上 PATH 里的 bash shim `npx` → **ENOENT**（裸名根本不在 libuv 的尝试表里）；`spawn('npx.sh')` → 找到 → CreateProcess → 193（Node 报错码 [UNC]）；`spawn('npx.cmd')` → EINVAL（R1.11）。
+- **R1.15** [推导] 推论：`spawn('npx')` 撞上 PATH 里的 bash shim `npx` → **ENOENT**（裸名根本不在 libuv 的尝试表里）；`spawn('npx.sh')` → 找到 → CreateProcess → 193（[EMP] Node 报 `EFTYPE`，selftest 实测）；`spawn('npx.cmd')` → EINVAL（R1.11）。
 - **R1.16** [DOC] cmd `/c` 重解析：CWD 优先（NoCurrentDirectoryInExePath 可关）→ PATH；试裸名 + PATHEXT 全表（默认 `.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC`）。**cmd 会找到无扩展名 bash shim——然后把它当批文本喂给 cmd**（语料库必测项：实际命运是逐行执行还是报错）。
 - **R1.17** [DOC] CreateProcess 内建顺序里**父进程应用目录先于 CWD**——与 libuv/cmd 都不同序。
 - **[UNC]** libuv `UV_PROCESS_WINDOWS_RESOLVE_BATCH`（PR #5096）若落地，libuv 表将含 `.bat/.cmd`——规则引擎要留"libuv 版本特征"维度。
