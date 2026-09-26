@@ -37,6 +37,8 @@ enum Cmd {
     /// Materialize the corpus's declared filesystems and compare each
     /// prediction against a real `node` spawn — the proof mode.
     Selftest,
+    /// Run as an MCP server over stdio (agents call the analyze_spawn tool)
+    Mcp,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -73,6 +75,9 @@ fn main() {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("corpus")
             };
             std::process::exit(spawnfate::selftest::run(&dir));
+        }
+        Some(Cmd::Mcp) => {
+            std::process::exit(spawnfate::mcp::run());
         }
         Some(Cmd::Raw { line }) => {
             let input = SpawnInput {
@@ -115,62 +120,7 @@ fn run(input: &SpawnInput, target: TargetParser, json: bool) {
 }
 
 fn real_env() -> Env {
-    let get = |k: &str| std::env::var(k).unwrap_or_default();
-    Env {
-        cwd: std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default(),
-        path: get("PATH")
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect(),
-        pathext: get("PATHEXT")
-            .split(';')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_ascii_uppercase())
-            .collect(),
-        comspec: if get("ComSpec").is_empty() {
-            r"C:\Windows\System32\cmd.exe".into()
-        } else {
-            get("ComSpec")
-        },
-        app_dir: std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.display().to_string()))
-            .unwrap_or_default(),
-        system32: r"C:\Windows\System32".into(),
-        windows_dir: if get("WINDIR").is_empty() {
-            r"C:\Windows".into()
-        } else {
-            get("WINDIR")
-        },
-        node_bat_guard: node_bat_guard(),
-        vars: std::env::vars()
-            .map(|(k, v)| (k.to_ascii_uppercase(), v))
-            .collect(),
-        ..Env::default()
-    }
-}
-
-/// The EINVAL-on-batch gate exists on Node >= 18.20.2 / 20.12.2 / 21.7.3 / 22.
-/// Query the real node on PATH if present.
-fn node_bat_guard() -> bool {
-    let Ok(out) = std::process::Command::new("node").arg("-v").output() else {
-        return true; // assume modern
-    };
-    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let Some(rest) = v.strip_prefix('v') else { return true };
-    let mut parts = rest.split('.').filter_map(|s| s.parse::<u32>().ok());
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(maj), Some(min), Some(patch)) => {
-            maj >= 22
-                || (maj == 21 && min >= 7 && patch >= 3)
-                || (maj == 20 && min >= 12 && patch >= 2)
-                || (maj == 18 && min >= 20 && patch >= 2)
-        }
-        _ => true,
-    }
+    spawnfate::real_env_public()
 }
 
 fn print_report(r: &Report) {
