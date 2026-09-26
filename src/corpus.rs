@@ -4,6 +4,7 @@
 use crate::fs::VirtualFs;
 use crate::model::*;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
 pub struct Corpus {
@@ -42,6 +43,8 @@ pub struct EnvSpec {
     pub no_cd_in_exe_path: Option<bool>,
     pub delayed_expansion: Option<bool>,
     pub node_bat_guard: Option<bool>,
+    /// General env vars for %VAR% expansion (keys normalized to uppercase).
+    pub vars: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub files: Vec<FileSpec>,
 }
@@ -107,6 +110,9 @@ pub fn build(case: &Case) -> (SpawnInput, Env, VirtualFs, TargetParser) {
         if let Some(v) = e.no_cd_in_exe_path { env.no_cd_in_exe_path = v; }
         if let Some(v) = e.delayed_expansion { env.delayed_expansion = v; }
         if let Some(v) = e.node_bat_guard { env.node_bat_guard = v; }
+        if let Some(v) = &e.vars {
+            for (k, val) in v { env.vars.insert(k.to_ascii_uppercase(), val.clone()); }
+        }
         for f in &e.files {
             fs = fs.file(&f.path, f.pe);
         }

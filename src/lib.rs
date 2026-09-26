@@ -14,7 +14,7 @@ pub mod selftest;
 pub mod serialize;
 
 use argv::split;
-use cmd::{apply_c_quotes, scan_hazards};
+use cmd::{apply_c_quotes, expand_percent, scan_hazards};
 use fs::Fs;
 use model::*;
 use resolve::{is_batch_literal, resolve_cmd, resolve_createprocess, resolve_libuv};
@@ -216,7 +216,22 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                 // The string cmd receives as S is `"<raw>"`; /s forces the
                 // strip-first-and-last-quote branch (R2.3).
                 let s_inner = format!("\"{raw}\"");
-                let (eff, preserved) = apply_c_quotes(&s_inner, true, false);
+                let (stripped, preserved) = apply_c_quotes(&s_inner, true, false);
+                // R2.6: %VAR% expands once at /c parse time, even inside
+                // quotes — and can inject live metachars.
+                let (eff, exp_notes) = expand_percent(&stripped, env);
+                if eff != stripped {
+                    notes.push(Note {
+                        layer: Layer::CmdParse,
+                        severity: Severity::Warn,
+                        rule: "R2.6",
+                        message: format!("after %VAR% expansion → {eff}"),
+                    });
+                }
+                for (rule, msg) in exp_notes {
+                    let sev = if rule.ends_with("inject") { Severity::Fatal } else { Severity::Warn };
+                    notes.push(Note { layer: Layer::CmdParse, severity: sev, rule, message: msg });
+                }
                 cmd_effective = Some(eff.clone());
                 notes.push(Note {
                     layer: Layer::CmdParse,

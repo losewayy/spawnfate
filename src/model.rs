@@ -2,6 +2,7 @@
 //! Rule references (R*.x) point to docs/spec-v0.md.
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// Who produced the call — each runtime serializes and resolves differently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -50,6 +51,9 @@ pub struct Env {
     pub no_cd_in_exe_path: bool,
     /// cmd delayed expansion (`/V:ON` or registry-enabled).
     pub delayed_expansion: bool,
+    /// General environment variables (UPPERCASE keys — cmd var names are
+    /// case-insensitive). Drives real `%VAR%` expansion.
+    pub vars: BTreeMap<String, String>,
     /// Node >= 18.20.2/20.12.2/21.7.3/22 — the CVE-2024-27980 EINVAL gate (R1.11).
     pub node_bat_guard: bool,
 }
@@ -75,6 +79,7 @@ impl Default for Env {
             windows_dir: r"C:\Windows".into(),
             no_cd_in_exe_path: false,
             delayed_expansion: false,
+            vars: BTreeMap::new(),
             node_bat_guard: true,
         }
     }

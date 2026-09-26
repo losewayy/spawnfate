@@ -146,6 +146,9 @@ fn real_env() -> Env {
             get("WINDIR")
         },
         node_bat_guard: node_bat_guard(),
+        vars: std::env::vars()
+            .map(|(k, v)| (k.to_ascii_uppercase(), v))
+            .collect(),
         ..Env::default()
     }
 }

@@ -71,13 +71,14 @@ pub fn scan_hazards(effective: &str, env: &Env) -> Vec<(&'static str, String)> {
                 format!("'^' at char {i} escapes the next char for cmd (quoting won't protect it inside quotes it is literal)"),
             )),
             '%' => {
-                // %var% expands at /c parse time even inside quotes (R2.6).
+                // After real expansion, a surviving %VAR% is an UNKNOWN var —
+                // cmd leaves it literal.
                 if let Some(end) = bytes[i + 1..].iter().position(|&c| c == '%') {
                     if end > 0 {
                         let name: String = bytes[i + 1..i + 1 + end].iter().collect();
                         hazards.push((
                             "R2.6",
-                            format!("'%{name}%' at char {i} expands an env var at parse time — quoting does not protect it"),
+                            format!("'%{name}%' at char {i} is an undefined variable — stays literal in the command"),
                         ));
                         i += end;
                     }
@@ -99,4 +100,67 @@ pub fn scan_hazards(effective: &str, env: &Env) -> Vec<(&'static str, String)> {
         i += 1;
     }
     hazards
+}
+
+/// %VAR% expansion on a `/c` line (R2.6): happens ONCE, at parse time, even
+/// inside quotes. Variable names are case-insensitive. Unknown names stay
+/// literal; `%%` stays `%%`; dynamic vars (%RANDOM%/%CD% etc.) expand from
+/// the machine, not from args.
+///
+/// Returns the expanded string plus notes. Expansion can INJECT metachars —
+/// an `&` inside %X%'s value becomes a live separator.
+pub fn expand_percent(s: &str, env: &Env) -> (String, Vec<(&'static str, String)>) {
+    let bytes: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut notes = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != '%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        // `%%` is a literal escape only inside batch files; on a /c line it
+        // stays %%. Either way: don't treat it as a var opener.
+        if matches!(bytes.get(i + 1), Some('%')) {
+            out.push_str("%%");
+            i += 2;
+            continue;
+        }
+        let Some(end) = bytes[i + 1..].iter().position(|&c| c == '%') else {
+            out.push('%');
+            i += 1;
+            continue;
+        };
+        let name: String = bytes[i + 1..i + 1 + end].iter().collect();
+        i += end + 2;
+        if name.is_empty() {
+            out.push_str("%%");
+            continue;
+        }
+        let key = name.to_ascii_uppercase();
+        // dynamic pseudo-vars
+        if matches!(key.as_str(), "RANDOM" | "TIME" | "DATE" | "CD" | "ERRORLEVEL" | "CMDEXTVERSION" | "CMDCMDLINE") {
+            let val = if key == "CD" { env.cwd.clone() } else { format!("<{key}>") };
+            notes.push(("R2.6-dynamic", format!("'%{name}%' is a dynamic cmd pseudo-var → {val}")));
+            out.push_str(&val);
+            continue;
+        }
+        match env.vars.get(&key) {
+            Some(val) => {
+                let injected = val.chars().any(|c| ['&','|','<','>','\r','\n'].contains(&c));
+                notes.push(("R2.6", format!("'%{name}%' expands to {val:?}")));
+                if injected {
+                    notes.push(("R2.6-inject", format!("EXPANSION INJECTS metachars — %{name}% value {val:?} contains command separators")));
+                }
+                out.push_str(val);
+            }
+            None => {
+                out.push('%');
+                out.push_str(&name);
+                out.push('%');
+            }
+        }
+    }
+    (out, notes)
 }
