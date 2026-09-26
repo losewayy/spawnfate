@@ -349,3 +349,48 @@ cases:
     expect:
       verdict: dies
       error: EinvalBatch
+
+  # ── Path canonicalization & namespace traps ────────────────────────────
+
+  - id: canon-dot-dot-collapse
+    title: '.\prog — the . component collapses before lookup'
+    rules: [R0.6]
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: node, file: '.\prog', shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: 'work\prog.exe'
+
+  - id: trailing-dot-guard-bypass
+    title: 'evil.cmd. slips past the EINVAL ext-check but still resolves to evil.cmd — CVE-2024-43402'
+    rules: [R0.7]
+    env:
+      files:
+        - {path: 'C:\work\evil.cmd'}
+        - {path: 'C:\Windows\System32\cmd.exe', pe: true}
+    input: {producer: node, file: 'evil.cmd.', shell: none}
+    expect:
+      verdict: dies
+      error: EinvalBatch
+      notes_rule: ['R0.7']
+
+  - id: device-name-nul
+    title: "spawn('nul') — a DOS device name, not a spawnable file"
+    rules: [R0.8]
+    env: {files: [{path: 'C:\work\nul.exe', pe: true}]}
+    input: {producer: node, file: '.\nul.exe', shell: none}
+    expect:
+      verdict: runs
+      notes_rule: ['R0.8']
+
+  - id: app-alias-stub
+    title: WindowsApps python.exe is a Store reparse stub, not a binary
+    rules: [R0.9]
+    env:
+      files:
+        - {path: 'C:\Users\me\AppData\Local\Microsoft\WindowsApps\python.exe', reparse: true}
+      path: ['C:\Users\me\AppData\Local\Microsoft\WindowsApps']
+    input: {producer: node, file: python, shell: none}
+    expect:
+      verdict: runs
+      notes_rule: ['R0.9']

@@ -54,6 +54,9 @@ pub struct FileSpec {
     pub path: String,
     #[serde(default)]
     pub pe: bool,
+    /// Mark as reparse point (junction / App Execution Alias stub).
+    #[serde(default)]
+    pub reparse: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +117,7 @@ pub fn build(case: &Case) -> (SpawnInput, Env, VirtualFs, TargetParser) {
             for (k, val) in v { env.vars.insert(k.to_ascii_uppercase(), val.clone()); }
         }
         for f in &e.files {
-            fs = fs.file(&f.path, f.pe);
+            fs = if f.reparse { fs.reparse_file(&f.path) } else { fs.file(&f.path, f.pe) };
         }
     }
     let shell = match case.input.shell.as_str() {

@@ -4,7 +4,7 @@
 //! they disagree (spec §"设计公理 3"). `spawn('npx')` dies not because Windows
 //! can't find `npx.cmd` but because libuv's candidate table never includes it.
 
-use crate::fs::{canon, join, Fs};
+use crate::fs::{canon, canon_path, join, Fs};
 use crate::model::Env;
 
 /// What one resolver concluded.
@@ -71,18 +71,26 @@ fn probe(dirs: &[String], candidates: Vec<String>, fs: &dyn Fs) -> Resolution {
 ///   libuv — a non-PE hit still returns found and dies later at exec)
 pub fn resolve_libuv(name: &str, env: &Env, fs: &dyn Fs) -> Resolution {
     if has_dir_sep(name) {
-        // "relative to CWD" — absolute paths also land here.
+        // Qualified path — absolute or relative-to-CWD. libuv still applies
+        // the extension candidates to it: spawn('./prog') finds ./prog.exe.
         let path = if name.contains(':') || name.starts_with(['\\', '/']) {
             name.to_string()
         } else {
             join(&env.cwd, name)
         };
-        let found = fs.file_exists(&path).then(|| path.clone());
-        return Resolution {
-            found,
-            tried: vec![path],
-            shadowed: vec![],
+        let candidates: Vec<String> = if has_ext(name) {
+            vec![path.clone(), format!("{path}.com"), format!("{path}.exe")]
+        } else {
+            vec![format!("{path}.com"), format!("{path}.exe")]
         };
+        let mut tried = Vec::new();
+        for c in &candidates {
+            tried.push(c.clone());
+            if fs.file_exists(c) {
+                return Resolution { found: Some(canon_path(c)), tried, shadowed: vec![] };
+            }
+        }
+        return Resolution { found: None, tried, shadowed: vec![] };
     }
     let dirs: Vec<String> = std::iter::once(env.cwd.clone())
         .chain(env.path.iter().cloned())

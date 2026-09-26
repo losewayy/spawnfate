@@ -15,7 +15,7 @@ pub mod serialize;
 
 use argv::split;
 use cmd::{apply_c_quotes, expand_percent, scan_hazards};
-use fs::Fs;
+use fs::{canon, is_device_name, Fs};
 use model::*;
 use resolve::{is_batch_literal, resolve_cmd, resolve_createprocess, resolve_libuv};
 use serialize::{node_command_line, NodeLine};
@@ -45,6 +45,15 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             input.file
                         ),
                     });
+                    let raw = input.file.to_ascii_lowercase();
+                    if !raw.ends_with(".bat") && !raw.ends_with(".cmd") {
+                        notes.push(Note {
+                            layer: Layer::Serialize,
+                            severity: Severity::Warn,
+                            rule: "R0.7",
+                            message: "trailing-dot disguise neutralized — the EINVAL guard checks the canonicalized name (CVE-2024-43402 fix)".into(),
+                        });
+                    }
                     suggestions.push(Suggestion {
                         id: "route-via-comspec",
                         text: "route the batch file through %ComSpec%: spawn(env.ComSpec, ['/d','/s','/c', cmdEscapedLine]) — or set {shell:true} accepting the raw-join caveats (R1.9)".into(),
@@ -91,8 +100,22 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     }
                     Some(path) => {
                         resolved = Some(path.clone());
+                        flag_resolved(&path, fs, &mut notes);
                         let l = path.to_ascii_lowercase();
-                        if !(fs.is_pe(&path) || l.ends_with(".bat") || l.ends_with(".cmd")) {
+                        if fs.is_reparse(&path) {
+                            // R0.9: reparse stub — the OS loader resolves the
+                            // alias target; spawnability is unknowable here.
+                            notes.push(Note {
+                                layer: Layer::Exec,
+                                severity: Severity::Warn,
+                                rule: "R0.9",
+                                message: format!("{path:?} is a reparse stub — if it is an App Execution Alias the OS resolves the alias target at load; spawnability is unknowable from the file alone [UNC]"),
+                            });
+                            suggestions.push(Suggestion {
+                                id: "app-alias-stub",
+                                text: "App Execution Alias: disable it in Settings → Apps → App execution aliases, or point at the real install".into(),
+                            });
+                        } else if !(fs.is_pe(&path) || l.ends_with(".bat") || l.ends_with(".cmd")) {
                             // R0.5: exists but cannot load → 193, not ENOENT.
                             notes.push(Note {
                                 layer: Layer::Exec,
@@ -136,11 +159,24 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                 // the args get re-tokenized by cmd's OWN grammar, not argv.
                 let is_batch = resolved
                     .as_deref()
-                    .map(|p| {
-                        let l = p.to_ascii_lowercase();
-                        l.ends_with(".bat") || l.ends_with(".cmd")
-                    })
+                    .map(|p| canon(p).ends_with(".bat") || canon(p).ends_with(".cmd"))
                     .unwrap_or(false);
+                // CVE-2024-43402: trailing dots/spaces defeat a naive
+                // ends-with extension check while the OS still canonicalizes
+                // to the batch file. If the raw resolved name doesn't LOOK
+                // batch but canon says it is — the guard was bypassed.
+                if is_batch {
+                    let raw = resolved.as_deref().unwrap_or("");
+                    let raw_l = raw.to_ascii_lowercase();
+                    if !raw_l.ends_with(".bat") && !raw_l.ends_with(".cmd") {
+                        notes.push(Note {
+                            layer: Layer::Resolve,
+                            severity: Severity::Fatal,
+                            rule: "R0.7",
+                            message: format!("{raw:?} canonicalizes to a batch file but doesn't end in .bat/.cmd — extension guards (EINVAL, BatBadBut) were bypassed — CVE-2024-43402 class"),
+                        });
+                    }
+                }
                 if is_batch {
                     // BatBadBut (R2.11): a '"' in any arg cannot be serialized
                     // safely for a batch target — no escaping exists.
@@ -271,6 +307,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                 match &res.found {
                     Some(found) => {
                         resolved = Some(found.clone());
+                        flag_resolved(found, fs, &mut notes);
                         notes.push(Note {
                             layer: Layer::Resolve,
                             severity: Severity::Info,
@@ -364,6 +401,7 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
             match res.found {
                 Some(path) => {
                     resolved = Some(path.clone());
+                    flag_resolved(&path, fs, &mut notes);
                     let l = path.to_ascii_lowercase();
                     if l.ends_with(".bat") || l.ends_with(".cmd") {
                         // R0.4: implicit cmd.exe from System32.
@@ -400,6 +438,27 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
         notes,
         verdict,
         suggestions,
+    }
+}
+
+
+/// Post-resolution reality checks: device names and reparse stubs.
+fn flag_resolved(found: &str, fs: &dyn Fs, notes: &mut Vec<Note>) {
+    if is_device_name(found) {
+        notes.push(Note {
+            layer: Layer::Resolve,
+            severity: Severity::Warn,
+            rule: "R0.8",
+            message: format!("DOS device name {found:?} — it exists via the device namespace but nothing matching it is a spawnable PE"),
+        });
+    }
+    if fs.is_reparse(found) {
+        notes.push(Note {
+            layer: Layer::Exec,
+            severity: Severity::Warn,
+            rule: "R0.9",
+            message: format!("{found:?} is a reparse point — under WindowsApps that means an App Execution Alias: spawning may open the Store, not a binary"),
+        });
     }
 }
 
