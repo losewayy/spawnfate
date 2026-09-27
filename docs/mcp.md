@@ -21,6 +21,19 @@ With `env`, a synthetic filesystem is declared (`files`) and the analysis
 runs purely against it — useful for "what would happen on a clean machine"
 or reproducing a user's environment.
 
+A `files` item is either a path string, or an object that carries the PE flag
+explicitly:
+
+```json
+{ "path": "C:\\tools\\nodejs\\node.exe", "pe": true }
+```
+
+A string item means the file exists, and is treated as a PE image when its
+extension is `.exe`/`.com`. Pass the object form when the extension is not a
+reliable signal — an extensionless real image, or a `.exe` that is not one.
+The flag decides the verdict: a resolved file that is not a PE image (and is
+not `.bat`/`.cmd`) dies with `ERROR_BAD_EXE_FORMAT`.
+
 Returns two content blocks: a human-readable finding list + verdict +
 prescriptions, and the full structured report as JSON.
 

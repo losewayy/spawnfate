@@ -55,8 +55,20 @@ fn tools() -> Value {
                         "pathext": { "type": "array", "items": { "type": "string" } },
                         "files": {
                             "type": "array",
-                            "items": { "type": "string" },
-                            "description": "Pretend these paths exist (synthetic fs)"
+                            "items": {
+                                "oneOf": [
+                                    { "type": "string" },
+                                    {
+                                        "type": "object",
+                                        "properties": {
+                                            "path": { "type": "string" },
+                                            "pe": { "type": "boolean" }
+                                        },
+                                        "required": ["path"]
+                                    }
+                                ]
+                            },
+                            "description": "Pretend these paths exist (synthetic fs). A string item means the file exists and is a PE image when the extension says so (.exe/.com); an object sets \"pe\" explicitly, for an extensionless image or a .exe that is not one"
                         },
                         "vars": { "type": "object" }
                     }
@@ -73,7 +85,18 @@ struct Args {
     shell: Shell,
     target: TargetParser,
     env: Option<Env>,
-    files: Vec<String>,
+    /// Synthetic files as (path, is a PE image).
+    files: Vec<(String, bool)>,
+}
+
+/// The string form of `env.files` carries no PE flag, so the flag is inferred
+/// from the extension — that is what callers got before the object form
+/// existed. An object item may override it, which is required for an
+/// extensionless real image (a `.cmd` shim and a stripped binary look alike)
+/// and for a `.exe` that is not one.
+fn infer_pe(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.ends_with(".exe") || lower.ends_with(".com")
 }
 
 fn parse_args(v: &Value) -> Result<Args, String> {
@@ -103,7 +126,27 @@ fn parse_args(v: &Value) -> Result<Args, String> {
             env.pathext = a.iter().filter_map(Value::as_str).map(str::to_string).collect();
         }
         if let Some(a) = e.get("files").and_then(Value::as_array) {
-            files = a.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            files = a
+                .iter()
+                .map(|item| match item {
+                    Value::String(path) => Ok((path.clone(), infer_pe(path))),
+                    Value::Object(o) => {
+                        let path = o
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| "env.files[]: an object item needs a \"path\"".to_string())?;
+                        let pe = match o.get("pe") {
+                            None => infer_pe(path),
+                            Some(Value::Bool(b)) => *b,
+                            Some(_) => return Err("env.files[]: \"pe\" must be a boolean".to_string()),
+                        };
+                        Ok((path.to_string(), pe))
+                    }
+                    other => Err(format!(
+                        "env.files[]: expected a path string or {{\"path\": ..., \"pe\": ...}}, got {other}"
+                    )),
+                })
+                .collect::<Result<Vec<_>, String>>()?;
         }
         if let Some(m) = e.get("vars").and_then(Value::as_object) {
             for (k, val) in m {
@@ -117,6 +160,65 @@ fn parse_args(v: &Value) -> Result<Args, String> {
         (None, vec![])
     };
     Ok(Args { file, args, shell, target, env, files })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_accept_a_string_or_an_object() {
+        let args = parse_args(&json!({
+            "file": "npx",
+            "env": { "files": ["C:\\tools\\node.exe", { "path": "C:\\tools\\npx", "pe": false }] }
+        }))
+        .expect("parse");
+        assert_eq!(
+            args.files,
+            vec![
+                ("C:\\tools\\node.exe".to_string(), true),
+                ("C:\\tools\\npx".to_string(), false),
+            ]
+        );
+    }
+
+    /// What the extension guess gets wrong, and why the object form exists:
+    /// a real image with no `.exe` suffix, and a `.exe` that is not one.
+    #[test]
+    fn the_pe_flag_overrides_the_extension_guess() {
+        let args = parse_args(&json!({
+            "file": "mod",
+            "env": { "files": [
+                { "path": "C:\\tools\\shim" },
+                { "path": "C:\\tools\\mod.exe", "pe": false }
+            ] }
+        }))
+        .expect("parse");
+        assert_eq!(
+            args.files,
+            vec![
+                ("C:\\tools\\shim".to_string(), false),
+                ("C:\\tools\\mod.exe".to_string(), false),
+            ]
+        );
+    }
+
+    /// A shapless item used to be dropped on the floor, which turned a bad
+    /// request into a confident verdict about a machine with no files at all.
+    #[test]
+    fn shapeless_file_items_are_rejected() {
+        let no_path = parse_args(&json!({ "file": "x", "env": { "files": [{ "pe": true }] } }));
+        match no_path {
+            Err(e) => assert!(e.contains("path"), "{e}"),
+            Ok(_) => panic!("an object without a path must not be accepted"),
+        }
+
+        let not_an_item = parse_args(&json!({ "file": "x", "env": { "files": [42] } }));
+        match not_an_item {
+            Err(e) => assert!(e.contains("env.files"), "{e}"),
+            Ok(_) => panic!("a non-string, non-object item must not be accepted"),
+        }
+    }
 }
 
 fn human_summary(r: &Report) -> String {
@@ -184,7 +286,7 @@ pub fn run() -> i32 {
                             };
                             let report = if let Some(env) = &a.env {
                                 let mut fs = VirtualFs::new();
-                                for f in &a.files { fs = fs.file(f, f.to_ascii_lowercase().ends_with(".exe") || f.to_ascii_lowercase().ends_with(".com")); }
+                                for (path, pe) in &a.files { fs = fs.file(path, *pe); }
                                 crate::analyze(&input, env, &fs, a.target)
                             } else {
                                 crate::analyze(&input, &crate::real_env_public(), &RealFs, a.target)
