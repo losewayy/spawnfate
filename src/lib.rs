@@ -7,6 +7,7 @@
 pub mod argv;
 pub mod cmd;
 pub mod corpus;
+pub mod explain;
 pub mod fs;
 pub mod model;
 pub mod resolve;

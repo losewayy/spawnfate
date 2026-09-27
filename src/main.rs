@@ -25,7 +25,7 @@ struct Cli {
     target: Target,
 
     /// Emit the report as JSON
-    #[arg(long)]
+    #[arg(long, global = true)]
     json: bool,
 }
 
@@ -34,6 +34,10 @@ enum Cmd {
     /// Analyze a raw command line as CreateProcess sees it
     /// (lpApplicationName = NULL — first token is the module name).
     Raw { line: String },
+    /// Read an error message back to the layer that produced it.
+    /// Paste `spawn npx ENOENT`, a Python traceback, or a Rust io error;
+    /// `-` reads stdin.
+    Explain { text: String },
     /// Materialize the corpus's declared filesystems and compare each
     /// prediction against a real `node` spawn — the proof mode.
     Selftest,
@@ -87,6 +91,10 @@ fn main() {
                 producer: Producer::RawCommandLine,
             };
             run(&input, cli.target.into(), cli.json);
+        }
+        Some(Cmd::Explain { text }) => {
+            let text = if text == "-" { read_stdin() } else { text };
+            print_explain(&text, cli.json);
         }
         None => {
             let Some(file) = cli.file else {
@@ -163,4 +171,47 @@ fn print_report(r: &Report) {
             println!("  UNSAFE — argv cannot be serialized without mangling")
         }
     }
+}
+
+fn read_stdin() -> String {
+    use std::io::Read;
+    let mut s = String::new();
+    std::io::stdin().read_to_string(&mut s).expect("read stdin");
+    s
+}
+
+/// Print an error-surface reading.
+///
+/// Exit code: `0` when a known surface matched, `4` when nothing did — the
+/// text is not modelled yet. Either way this is a differential; `spawnfate
+/// <file> <args>` is the authoritative answer, and every hit prints it.
+fn print_explain(text: &str, json: bool) {
+    let hits = spawnfate::explain::explain(text);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&hits).unwrap());
+    } else if hits.is_empty() {
+        println!("== reading ==");
+        println!(
+            "  no known error surface in {} byte(s) of input",
+            text.len()
+        );
+        println!("  modelled: Win32 2 / 193, Node ENOENT / EINVAL / EFTYPE, cmd's own complaint");
+        println!("  with the exact call, ask for a verdict instead:");
+        println!("    spawnfate <file> <args>");
+    } else {
+        for hit in &hits {
+            let s = hit.signature;
+            println!("== reading ==\n  {} (on \"{}\")", s.id, hit.evidence);
+            println!("  layer: {:?}", s.layer);
+            println!("  rules: {}", s.rules.join(", "));
+            println!("  case:  {} (corpus/core.yaml)", s.case);
+            println!("  means: {}", s.diagnosis);
+            println!("== prescription ==");
+            for f in s.fixes {
+                println!("  → [{}] {}", f.id, f.text);
+            }
+            println!("== definite answer ==\n  {}", s.verify);
+        }
+    }
+    std::process::exit(if hits.is_empty() { 4 } else { 0 });
 }

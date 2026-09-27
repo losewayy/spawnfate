@@ -91,12 +91,25 @@ spawnfate --target go prog "a""b c"
 # a raw CreateProcess(lpApplicationName=NULL) command line
 spawnfate raw "setup.cmd /q"
 
+# you have the error, not the argv
+spawnfate explain "Error: spawn npx ENOENT"
+
 # machine-readable
 spawnfate --json npx
 ```
 
 Exit codes: `0` predicted to run, `1` dies before user code, `3` argv cannot be
-serialized without mangling.
+serialized without mangling. For `explain`: `0` a surface matched, `4` nothing
+known did.
+
+## Got an error instead of an argv?
+
+`spawnfate explain "<error text>"` reads what you already have — a Node stack, a
+Python traceback, a Rust `io` error, cmd's own complaint — and names the layer
+that produced it, with the prescription. Every hit cites the spec rule and the
+corpus case it rests on, and prints the command that turns the reading into a
+verdict. It is a differential, not a verdict: `spawnfate <file> <args>` stays
+authoritative. See [docs/explain.md](docs/explain.md).
 
 ## For AI agents (MCP)
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+- **`explain`**: read an error surface back to the layer that produced it —
+  Win32 2 / 193, Node `ENOENT` / `EINVAL` / `EFTYPE`, and cmd's own complaint.
+  Each reading cites the spec rule and the corpus case it rests on, prints the
+  prescription, and prints the command that turns the reading into a verdict.
+  `-` reads stdin; exit `0` matched, `4` not modelled. See
+  [docs/explain.md](docs/explain.md).
+- Measured (node v24.15.0): a `cwd` that does not exist surfaces as `ENOENT`
+  (errno -4058), not Win32 status 3, so both failures read as one surface.
+
 ## [0.1.0] — 2026-09-26
 
 Initial kernel.
