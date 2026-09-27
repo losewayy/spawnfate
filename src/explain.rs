@@ -101,7 +101,7 @@ pub static SIGNATURES: &[Signature] = &[
         all_of: &["enoent"],
         any_of: &[],
         layer: Layer::Resolve,
-        rules: &["R1.14", "R1.15"],
+        rules: &["R1.14", "R1.15", "R0.10"],
         case: "node-npx-enoent",
         diagnosis: "Node/libuv reports the failure as `ENOENT` (errno -4058) \
                     instead of the Win32 text. The name reached the resolver and \

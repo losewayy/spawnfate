@@ -34,6 +34,8 @@
 - **R0.8** [DOC] DOS 保留设备名（`NUL`/`CON`/`AUX`/`PRN`/`COM1-9`/`LPT1-9`，含带扩展名形态 `con.txt`）通过 DOS 设备命名空间"存在"于每台机器——`CreateFile("nul")` 随处成功，但其中没有可 spawn 的 PE。预测：解析器可见、193 级失败。
 - **R0.9** [DOC] **App Execution Alias**：`%LOCALAPPDATA%\Microsoft\WindowsApps\*.exe` 是 reparse point 占位符（FILE_ATTRIBUTE_REPARSE_POINT 0x400），OS loader 解析别名目标——装了应用则启动真身，没装则跳商店页。**单凭文件无法判定命运** [UNC]；建议处方：关 Settings→Apps→App execution aliases 或指向真安装路径。
 
+- **R0.10** [EMP] **工作目录必须先存在**：libuv 在 exec 之前先 chdir，`cwd` 指向不存在的目录时 spawn 直接失败 `ENOENT`（errno -4058）——**名字解析根本没被调用**，所以它与"程序找不到"共用同一个错误面，靠错误码分不开。[EMP node v24.15.0：`spawnSync('cmd',['/c','echo'],{cwd:'<不存在>'})` → `code ENOENT / errno -4058`]。语料库用例一律 materialize 出 cwd（该假设一致成立），`cwd_missing` 开关把这个假设显式化，并让它可被单独测试。
+
 ## Layer 1 — 生产者序列化（argv → 命令线）
 
 ### 1a. 消费者契约（逆规则）

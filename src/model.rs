@@ -56,6 +56,10 @@ pub struct Env {
     pub vars: BTreeMap<String, String>,
     /// Node >= 18.20.2/20.12.2/21.7.3/22 — the CVE-2024-27980 EINVAL gate (R1.11).
     pub node_bat_guard: bool,
+    /// The caller hands a working directory that does not exist. Every corpus
+    /// case materializes its cwd, so this is false there — it exists to make
+    /// the model's standing assumption explicit and checkable (R0.10).
+    pub cwd_missing: bool,
 }
 
 impl Default for Env {
@@ -81,6 +85,7 @@ impl Default for Env {
             delayed_expansion: false,
             vars: BTreeMap::new(),
             node_bat_guard: true,
+            cwd_missing: false,
         }
     }
 }

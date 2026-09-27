@@ -43,6 +43,9 @@ pub struct EnvSpec {
     pub no_cd_in_exe_path: Option<bool>,
     pub delayed_expansion: Option<bool>,
     pub node_bat_guard: Option<bool>,
+    /// Declare the working directory missing (R0.10). Selftest then leaves the
+    /// directory uncreated so the real spawn exercises it.
+    pub cwd_missing: Option<bool>,
     /// General env vars for %VAR% expansion (keys normalized to uppercase).
     pub vars: Option<BTreeMap<String, String>>,
     #[serde(default)]
@@ -113,6 +116,7 @@ pub fn build(case: &Case) -> (SpawnInput, Env, VirtualFs, TargetParser) {
         if let Some(v) = e.no_cd_in_exe_path { env.no_cd_in_exe_path = v; }
         if let Some(v) = e.delayed_expansion { env.delayed_expansion = v; }
         if let Some(v) = e.node_bat_guard { env.node_bat_guard = v; }
+        if let Some(v) = e.cwd_missing { env.cwd_missing = v; }
         if let Some(v) = &e.vars {
             for (k, val) in v { env.vars.insert(k.to_ascii_uppercase(), val.clone()); }
         }

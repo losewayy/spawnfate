@@ -7,7 +7,7 @@
 # Schema:
 #   id, title, rules?, source?
 #   env:  cwd?, path?, pathext?, comspec?, app_dir?, system32?, windows_dir?,
-#         no_cd_in_exe_path?, delayed_expansion?, node_bat_guard?,
+#         no_cd_in_exe_path?, delayed_expansion?, node_bat_guard?, cwd_missing?,
 #         files: [{path, pe?}]
 #   input: {producer: node|raw, file, args?, shell: none|cmd|<path>}
 #   target?: msvcrt|cltavw|go|batch
@@ -135,6 +135,29 @@ cases:
     expect:
       verdict: runs
       resolved_contains: C:\prog\tool.exe
+
+  # ── R0.10: the working directory is a precondition, not a search dir ────
+  #
+  # The name below resolves on a machine where the cwd exists, which is what
+  # makes the case interesting: the spawn still dies, because libuv chdirs
+  # before it execs. selftest leaves the directory uncreated to keep it real.
+
+  - id: cwd-missing-enoent
+    title: a cwd that does not exist dies ENOENT before resolution is attempted
+    rules: [R0.10]
+    source: measured on node v24.15.0 — spawnSync('cmd',['/c','echo'],{cwd:'<missing>'}) → code ENOENT, errno -4058
+    env:
+      cwd: 'C:\work\gone'
+      cwd_missing: true
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\node.exe', pe: true}
+    input: {producer: node, file: node.exe, args: ['-v'], shell: none}
+    expect:
+      verdict: dies
+      error: FileNotFound
+      layer: Resolve
+      notes_rule: ['R0.10']
 
   # ── Layer 1: serialization round-trips (CPython-style vectors) ───────────
 

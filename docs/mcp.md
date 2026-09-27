@@ -14,7 +14,13 @@ what will happen.**
 | `args` | string[] | argv vector, pre-serialization |
 | `shell` | `"none" \| "cmd"` | `cmd` = Node `{shell:true}` (cmd re-parse) |
 | `target` | `"msvcrt" \| "cltavw" \| "go" \| "batch"` | spawned program's argv dialect |
-| `env` | object | optional synthetic environment — `cwd`, `path[]`, `pathext[]`, `files[]`, `vars{}` |
+| `env` | object | optional synthetic environment — `cwd`, `path[]`, `pathext[]`, `cwd_missing`, `files[]`, `vars{}` |
+
+The env surface is deliberately a subset of the model's switches: the ones an
+agent asks about when it wonders "what would happen on a machine that isn't
+this one". The rest (`node_bat_guard`, `delayed_expansion`,
+`no_cd_in_exe_path`, `comspec`, …) live in the corpus, where a case can pin
+them.
 
 With no `env`, the prediction uses the machine's real PATH/PATHEXT/env.
 With `env`, a synthetic filesystem is declared (`files`) and the analysis

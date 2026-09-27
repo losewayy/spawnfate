@@ -32,6 +32,36 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
     let mut cmd_effective = None;
     let verdict;
 
+    // R0.10: libuv chdirs before it execs, so a working directory that does
+    // not exist kills the spawn before any name is resolved. The producer does
+    // not matter — every path goes through CreateProcess with this cwd.
+    if env.cwd_missing {
+        notes.push(Note {
+            layer: Layer::Resolve,
+            severity: Severity::Fatal,
+            rule: "R0.10",
+            message: format!(
+                "working directory \"{}\" does not exist — libuv chdirs before it execs, so the spawn fails ENOENT before resolution is attempted",
+                env.cwd
+            ),
+        });
+        suggestions.push(Suggestion {
+            id: "cwd-must-exist",
+            text: "create the directory that is passed as the working directory, or drop the cwd option".into(),
+        });
+        return Report {
+            resolved: None,
+            command_line: None,
+            cmd_effective: None,
+            notes,
+            verdict: Verdict::Dies {
+                layer: Layer::Resolve,
+                error: Error::FileNotFound,
+            },
+            suggestions,
+        };
+    }
+
     match input.producer {
         Producer::Node => match &input.shell {
             Shell::None => {

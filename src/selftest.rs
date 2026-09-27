@@ -47,9 +47,12 @@ fn remap(path: &str, root: &Path) -> String {
 
 /// Write the declared virtual filesystem under `root`, plus the cwd and PATH
 /// dirs themselves — a missing cwd makes real spawn fail ENOENT before
-/// resolution is even attempted.
+/// resolution is even attempted (R0.10), so a case that declares it missing
+/// gets the directory left out on purpose.
 fn materialize(case: &Case, env: &Env, root: &Path) {
-    std::fs::create_dir_all(remap(&env.cwd, root)).unwrap();
+    if !env.cwd_missing {
+        std::fs::create_dir_all(remap(&env.cwd, root)).unwrap();
+    }
     for d in &env.path {
         std::fs::create_dir_all(remap(d, root)).unwrap();
     }

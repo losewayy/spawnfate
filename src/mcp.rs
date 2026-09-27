@@ -53,6 +53,10 @@ fn tools() -> Value {
                         "cwd": { "type": "string" },
                         "path": { "type": "array", "items": { "type": "string" } },
                         "pathext": { "type": "array", "items": { "type": "string" } },
+                        "cwd_missing": {
+                            "type": "boolean",
+                            "description": "Pretend the cwd does not exist on the modelled machine — the spawn then dies ENOENT before resolution (R0.10)"
+                        },
                         "files": {
                             "type": "array",
                             "items": {
@@ -125,6 +129,9 @@ fn parse_args(v: &Value) -> Result<Args, String> {
         if let Some(a) = e.get("pathext").and_then(Value::as_array) {
             env.pathext = a.iter().filter_map(Value::as_str).map(str::to_string).collect();
         }
+        if let Some(v) = e.get("cwd_missing").and_then(Value::as_bool) {
+            env.cwd_missing = v;
+        }
         if let Some(a) = e.get("files").and_then(Value::as_array) {
             files = a
                 .iter()
@@ -160,65 +167,6 @@ fn parse_args(v: &Value) -> Result<Args, String> {
         (None, vec![])
     };
     Ok(Args { file, args, shell, target, env, files })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn files_accept_a_string_or_an_object() {
-        let args = parse_args(&json!({
-            "file": "npx",
-            "env": { "files": ["C:\\tools\\node.exe", { "path": "C:\\tools\\npx", "pe": false }] }
-        }))
-        .expect("parse");
-        assert_eq!(
-            args.files,
-            vec![
-                ("C:\\tools\\node.exe".to_string(), true),
-                ("C:\\tools\\npx".to_string(), false),
-            ]
-        );
-    }
-
-    /// What the extension guess gets wrong, and why the object form exists:
-    /// a real image with no `.exe` suffix, and a `.exe` that is not one.
-    #[test]
-    fn the_pe_flag_overrides_the_extension_guess() {
-        let args = parse_args(&json!({
-            "file": "mod",
-            "env": { "files": [
-                { "path": "C:\\tools\\shim" },
-                { "path": "C:\\tools\\mod.exe", "pe": false }
-            ] }
-        }))
-        .expect("parse");
-        assert_eq!(
-            args.files,
-            vec![
-                ("C:\\tools\\shim".to_string(), false),
-                ("C:\\tools\\mod.exe".to_string(), false),
-            ]
-        );
-    }
-
-    /// A shapless item used to be dropped on the floor, which turned a bad
-    /// request into a confident verdict about a machine with no files at all.
-    #[test]
-    fn shapeless_file_items_are_rejected() {
-        let no_path = parse_args(&json!({ "file": "x", "env": { "files": [{ "pe": true }] } }));
-        match no_path {
-            Err(e) => assert!(e.contains("path"), "{e}"),
-            Ok(_) => panic!("an object without a path must not be accepted"),
-        }
-
-        let not_an_item = parse_args(&json!({ "file": "x", "env": { "files": [42] } }));
-        match not_an_item {
-            Err(e) => assert!(e.contains("env.files"), "{e}"),
-            Ok(_) => panic!("a non-string, non-object item must not be accepted"),
-        }
-    }
 }
 
 fn human_summary(r: &Report) -> String {
@@ -309,4 +257,75 @@ pub fn run() -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_accept_a_string_or_an_object() {
+        let args = parse_args(&json!({
+            "file": "npx",
+            "env": { "files": ["C:\\tools\\node.exe", { "path": "C:\\tools\\npx", "pe": false }] }
+        }))
+        .expect("parse");
+        assert_eq!(
+            args.files,
+            vec![
+                ("C:\\tools\\node.exe".to_string(), true),
+                ("C:\\tools\\npx".to_string(), false),
+            ]
+        );
+    }
+
+    /// What the extension guess gets wrong, and why the object form exists:
+    /// a real image with no `.exe` suffix, and a `.exe` that is not one.
+    #[test]
+    fn the_pe_flag_overrides_the_extension_guess() {
+        let args = parse_args(&json!({
+            "file": "mod",
+            "env": { "files": [
+                { "path": "C:\\tools\\shim" },
+                { "path": "C:\\tools\\mod.exe", "pe": false }
+            ] }
+        }))
+        .expect("parse");
+        assert_eq!(
+            args.files,
+            vec![
+                ("C:\\tools\\shim".to_string(), false),
+                ("C:\\tools\\mod.exe".to_string(), false),
+            ]
+        );
+    }
+
+    /// A shapeless item used to be dropped on the floor, which turned a bad
+    /// request into a confident verdict about a machine with no files at all.
+    #[test]
+    fn shapeless_file_items_are_rejected() {
+        let no_path = parse_args(&json!({ "file": "x", "env": { "files": [{ "pe": true }] } }));
+        match no_path {
+            Err(e) => assert!(e.contains("path"), "{e}"),
+            Ok(_) => panic!("an object without a path must not be accepted"),
+        }
+
+        let not_an_item = parse_args(&json!({ "file": "x", "env": { "files": [42] } }));
+        match not_an_item {
+            Err(e) => assert!(e.contains("env.files"), "{e}"),
+            Ok(_) => panic!("a non-string, non-object item must not be accepted"),
+        }
+    }
+
+    #[test]
+    fn cwd_missing_is_an_env_switch() {
+        let args = parse_args(&json!({
+            "file": "prog.exe",
+            "env": { "cwd": "C:\\work\\gone", "cwd_missing": true }
+        }))
+        .expect("parse");
+        let env = args.env.expect("env");
+        assert!(env.cwd_missing);
+        assert_eq!(env.cwd, "C:\\work\\gone");
+    }
 }

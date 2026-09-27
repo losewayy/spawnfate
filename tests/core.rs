@@ -34,6 +34,37 @@ fn node(file: &str, args: &[&str], shell: Shell) -> SpawnInput {
     }
 }
 
+/// R0.10 — the working directory is a precondition, not a search directory.
+/// `node.exe` resolves on a machine where the cwd exists; the spawn still
+/// dies, because libuv chdirs before it execs. The corpus case of the same
+/// name re-measures this against a real spawn in `selftest`.
+#[test]
+fn a_missing_cwd_dies_before_resolution() {
+    let env = Env {
+        cwd: r"C:\work\gone".into(),
+        cwd_missing: true,
+        ..env()
+    };
+    let report = analyze(
+        &node("node.exe", &["-v"], Shell::None),
+        &env,
+        &fs(),
+        TargetParser::Msvcrt,
+    );
+    assert_eq!(
+        report.verdict,
+        Verdict::Dies {
+            layer: Layer::Resolve,
+            error: Error::FileNotFound
+        }
+    );
+    assert!(
+        report.notes.iter().any(|n| n.rule == "R0.10"),
+        "the R0.10 note is missing"
+    );
+    assert!(report.suggestions.iter().any(|s| s.id == "cwd-must-exist"));
+}
+
 /// R1.14/R1.15: `spawn('npx')` → ENOENT. The .cmd exists, the shim exists —
 /// libuv's candidate table contains neither. (kimi-code #3236)
 #[test]

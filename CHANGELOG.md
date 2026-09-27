@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **R0.10 — a working directory that does not exist now dies before
+  resolution**, instead of being silently assumed away. libuv chdirs before it
+  execs, so the spawn fails `ENOENT` even when the name would have resolved;
+  measured on node v24.15.0, and the new `cwd-missing-enoent` corpus case
+  re-measures it through `selftest`. The assumption the model always made is
+  now explicit (`env.cwd_missing`) and checkable.
 - **`explain`**: read an error surface back to the layer that produced it —
   Win32 2 / 193, Node `ENOENT` / `EINVAL` / `EFTYPE`, and cmd's own complaint.
   Each reading cites the spec rule and the corpus case it rests on, prints the
