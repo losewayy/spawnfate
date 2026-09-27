@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+- **The L4 table is measured now, and one rule in it was wrong.** Four
+  ground-truth probes (MSVC CRT, shell32 `CommandLineToArgvW`, go1.27.1, a Rust
+  binary) were fed the same crafted command lines through a verbatim
+  `lpCommandLine`. `--target cltavw` turned out to model a pre-2008 CRT rather
+  than `CommandLineToArgvW`: shell32 reads `"a""b c"` as two args, `a"b` and
+  `c` — as Go does — not as `ab c`. The parser, the spec table and the unit
+  test are corrected, and `l4-cltavw-divergence` pins it. Rust, measured the
+  same way, is MSVCRT-standard on every vector including a malformed argv0, so
+  there is no `--target rust` to add and the spec's argv[0] note is retracted.
 - **R0.10 — a working directory that does not exist now dies before
   resolution**, instead of being silently assumed away. libuv chdirs before it
   execs, so the spawn fails `ENOENT` even when the name would have resolved;

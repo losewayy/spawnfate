@@ -1,8 +1,10 @@
 //! Layer 4 — the target program's own argv split. Same string, different
 //! parsers, different answers (spec L4 table).
 //!
-//! Divergence example for `"a""b c"`:
-//!   Msvcrt → ["a\"b c"]   Cltavw → ["ab c"]   Go → ["a\"b","c"]
+//! Divergence example for `"a""b c"`, measured against real binaries
+//! (MSVC CRT / shell32 / go1.27.1 / a Rust binary — see the L4 table in
+//! docs/spec-v0.md):
+//!   Msvcrt, Rust → ["a\"b c"]      Cltavw, Go → ["a\"b","c"]
 
 use crate::model::TargetParser;
 
@@ -14,7 +16,8 @@ pub fn split(cmdline: &str, parser: TargetParser) -> Vec<String> {
 }
 
 /// MSVCRT / CLTAVW / Go share the backslash-quoting skeleton and differ only
-/// in the `""`-inside-quotes rule (R1.4 + Go's exit-quote quirk).
+/// in the `""`-inside-quotes rule (R1.4): MSVCRT keeps quote mode, CLTAVW and
+/// Go leave it.
 fn split_argv(s: &str, parser: TargetParser) -> Vec<String> {
     let chars: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
@@ -62,8 +65,12 @@ fn split_argv(s: &str, parser: TargetParser) -> Vec<String> {
                             cur.push('"');
                             i += 1;
                         }
-                        // Go: "" emits literal " AND exits quote mode
-                        TargetParser::Go
+                        // CommandLineToArgvW and Go: "" emits a literal " AND
+                        // exits quote mode. Measured, not remembered: shell32
+                        // on Windows 10.0.29671 reads `"a""b c"` as
+                        // ["a\"b","c"] — the old model said ["ab c"], which is
+                        // what a pre-2008 CRT does, not what CLTAVW does.
+                        TargetParser::Go | TargetParser::Cltavw
                             if in_q && matches!(chars.get(i + 1), Some('"')) =>
                         {
                             cur.push('"');

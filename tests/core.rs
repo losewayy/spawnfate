@@ -139,11 +139,15 @@ fn trailing_backslash_round_trips() {
 }
 
 /// Same string, different parsers — the L4 divergence matrix (spec L4).
+/// The one shape where the parsers part ways. All three values are measured
+/// against real binaries (MSVC CRT / shell32 / go1.27.1 / a Rust binary); the
+/// CLTAVW reading used to be asserted as `["exe","ab c"]`, which is what a
+/// pre-2008 CRT does — not what CommandLineToArgvW does.
 #[test]
 fn parsers_disagree_on_double_quote() {
     let s = r#"exe "a""b c""#;
     assert_eq!(split(s, TargetParser::Msvcrt), vec!["exe", "a\"b c"]);
-    assert_eq!(split(s, TargetParser::Cltavw), vec!["exe", "ab c"]);
+    assert_eq!(split(s, TargetParser::Cltavw), vec!["exe", "a\"b", "c"]);
     assert_eq!(split(s, TargetParser::Go), vec!["exe", "a\"b", "c"]);
 }
 

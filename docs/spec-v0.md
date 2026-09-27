@@ -107,15 +107,15 @@
 | 目标 | 解析器 | 判定 |
 |---|---|---|
 | MSVC C/C++、Node、Python3、.NET | post-2008 MSVCRT（含 `""` 规则） | **MSVCRT-standard** [DOC/SRC] |
-| Rust `std::env::args` | 自写 post-2008 规则，**但 argv[0] 走 CLTAVW 怪癖**（`"a"b x`→argv0=`a`,argv1=`b`） | MSVCRT-standard + argv0 标注 [SRC] |
-| Go `os.Args` | **自写方言**：`""` 出引号态且发字面 `"`（两边都不像）；无 argv0 特例 | **runtime-specific** [SRC 本地实证] |
+| Rust `std::env::args` | 自写 post-2008 规则，实测**与 MSVCRT-standard 逐向量一致**（含畸形 argv0：`"P"x "a"b x` → argv0=`P.exex`）；未观察到 CLTAVW 式的 argv0 差异 | **MSVCRT-standard**，不单列 target [EMP 2026-09-27：Rust 二进制 + Python 逐字 lpCommandLine，8 条向量] |
+| Go `os.Args` | `""` 发字面 `"` **且退出引号态**（此形状与 CLTAVW 一致、与 MSVCRT 分歧）；argv0 无特例（与其余参数同一解析器） | runtime-specific [EMP：go1.27.1] |
 | Java | `JLI_CmdToArgs` 用 **CP_ACP** 重解析 + `*`/`?` **glob 展开应用参数** | runtime-specific + 编码有损 + glob [DOC/SRC] |
 | .bat/.cmd | cmd tokenizer（分隔符不同、引号保留、%* 原始） | **完全不同的语法** |
 | .ps1 | hop1=CLR MSVCRT → hop2=PS binder（`-Command` 有二次解析） | hop1 standard |
-| CommandLineToArgvW（shell32） | **pre-2008**——无 `""`→`"` 规则 | 与 MSVCRT 明确分歧点 |
+| CommandLineToArgvW（shell32） | `""` 发字面 `"` **且退出引号态**——不是"pre-2008 无规则"；argv0 另有特例 | 与 MSVCRT 明确分歧点 [EMP 2026-09-27：shell32 真值探针实测] |
 | 未识别 binary | — | 默认 MSVCRT（~80% 命中率）+ **置信度标签**，不打包票 |
 
-**分歧示例**（同一串 `"a""b c"`）：MSVCRT→`a"b c` 一个参数；CLTAVW→`ab c`；**Go→两个参数 `a"b`+`c`**；批 `%1` 原样带引号。
+**分歧示例**（同一串 `"a""b c"`，2026-09-27 四个真值探针实测）：MSVCRT/Rust → `a"b c` 一个参数；**CLTAVW/Go → 两个参数 `a"b` + `c`**；批 `%1` 原样带引号。
 
 ---
 

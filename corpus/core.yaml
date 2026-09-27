@@ -311,6 +311,19 @@ cases:
       verdict: runs
       argv: ['prog', 'a"b c']
 
+  # The case that was missing: without it the cltavw rule was never pinned, and
+  # it modelled a pre-2008 CRT instead of shell32.
+  - id: l4-cltavw-divergence
+    title: "same raw line under CommandLineToArgvW reads two args, as Go does"
+    rules: [R1.4]
+    source: measured 2026-09-27 — shell32 probe (cltavw_argv.c, GetCommandLineW → CommandLineToArgvW) on Windows 10.0.29671
+    env: {files: [{path: 'C:\work\prog.exe', pe: true}]}
+    input: {producer: raw, file: 'prog "a""b c"', shell: none}
+    target: cltavw
+    expect:
+      verdict: runs
+      argv: ['prog', 'a"b', 'c']
+
   # ── Raw CreateProcess mode ───────────────────────────────────────────────
 
   - id: raw-quoted-exe-spaces
