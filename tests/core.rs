@@ -69,7 +69,12 @@ fn a_missing_cwd_dies_before_resolution() {
 /// libuv's candidate table contains neither. (kimi-code #3236)
 #[test]
 fn bare_npx_dies_enoent() {
-    let r = analyze(&node("npx", &["-v"], Shell::None), &env(), &fs(), TargetParser::Msvcrt);
+    let r = analyze(
+        &node("npx", &["-v"], Shell::None),
+        &env(),
+        &fs(),
+        TargetParser::Msvcrt,
+    );
     assert!(matches!(
         r.verdict,
         Verdict::Dies {
@@ -109,7 +114,13 @@ fn explicit_cmd_dies_einval() {
         &fs(),
         TargetParser::Msvcrt,
     );
-    assert!(!matches!(r2.verdict, Verdict::Dies { error: Error::EinvalBatch, .. }));
+    assert!(!matches!(
+        r2.verdict,
+        Verdict::Dies {
+            error: Error::EinvalBatch,
+            ..
+        }
+    ));
 }
 
 /// R1.16/R2.3: `shell:true` re-routes through cmd's own resolver — which DOES

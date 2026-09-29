@@ -27,7 +27,9 @@ pub fn apply_c_quotes(s: &str, s_flag: bool, quoted_is_exe: bool) -> (String, bo
     if !s_flag && n_quotes == 2 && quoted_is_exe {
         if let (Some(a), Some(b)) = (s.find('"'), s.rfind('"')) {
             let inner = &s[a + 1..b];
-            let no_meta = !inner.bytes().any(|c| matches!(c, b'&' | b'<' | b'>' | b'(' | b')' | b'@' | b'^' | b'|'));
+            let no_meta = !inner
+                .bytes()
+                .any(|c| matches!(c, b'&' | b'<' | b'>' | b'(' | b')' | b'@' | b'^' | b'|'));
             let has_space = inner.bytes().any(|c| matches!(c, b' ' | b'\t'));
             if a == 0 && no_meta && has_space {
                 return (s.to_string(), true); // preserve — quoted exe path w/ spaces
@@ -140,15 +142,27 @@ pub fn expand_percent(s: &str, env: &Env) -> (String, Vec<(&'static str, String)
         }
         let key = name.to_ascii_uppercase();
         // dynamic pseudo-vars
-        if matches!(key.as_str(), "RANDOM" | "TIME" | "DATE" | "CD" | "ERRORLEVEL" | "CMDEXTVERSION" | "CMDCMDLINE") {
-            let val = if key == "CD" { env.cwd.clone() } else { format!("<{key}>") };
-            notes.push(("R2.6-dynamic", format!("'%{name}%' is a dynamic cmd pseudo-var → {val}")));
+        if matches!(
+            key.as_str(),
+            "RANDOM" | "TIME" | "DATE" | "CD" | "ERRORLEVEL" | "CMDEXTVERSION" | "CMDCMDLINE"
+        ) {
+            let val = if key == "CD" {
+                env.cwd.clone()
+            } else {
+                format!("<{key}>")
+            };
+            notes.push((
+                "R2.6-dynamic",
+                format!("'%{name}%' is a dynamic cmd pseudo-var → {val}"),
+            ));
             out.push_str(&val);
             continue;
         }
         match env.vars.get(&key) {
             Some(val) => {
-                let injected = val.chars().any(|c| ['&','|','<','>','\r','\n'].contains(&c));
+                let injected = val
+                    .chars()
+                    .any(|c| ['&', '|', '<', '>', '\r', '\n'].contains(&c));
                 notes.push(("R2.6", format!("'%{name}%' expands to {val:?}")));
                 if injected {
                     notes.push(("R2.6-inject", format!("EXPANSION INJECTS metachars — %{name}% value {val:?} contains command separators")));

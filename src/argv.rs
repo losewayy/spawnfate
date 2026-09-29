@@ -59,9 +59,7 @@ fn split_argv(s: &str, parser: TargetParser) -> Vec<String> {
                 } else {
                     match parser {
                         // post-2008: inside quotes, "" → literal " and stay in
-                        TargetParser::Msvcrt
-                            if in_q && matches!(chars.get(i + 1), Some('"')) =>
-                        {
+                        TargetParser::Msvcrt if in_q && matches!(chars.get(i + 1), Some('"')) => {
                             cur.push('"');
                             i += 1;
                         }

@@ -12,7 +12,9 @@ pub trait Fs {
     fn is_pe(&self, path: &str) -> bool;
     /// Reparse point — junction, symlink, or an App Execution Alias stub
     /// (the `WindowsApps` Store trap). Default: VirtualFs never has these.
-    fn is_reparse(&self, _path: &str) -> bool { false }
+    fn is_reparse(&self, _path: &str) -> bool {
+        false
+    }
 }
 
 /// Normalize for Windows comparison — what the OS applies to every
@@ -25,7 +27,10 @@ pub fn canon(path: &str) -> String {
     let p = path.replace('/', "\\");
     let (verbatim, p) = match p.strip_prefix("\\?\\") {
         Some(r) => (true, r.to_string()),
-        None => (false, p.strip_prefix("\\.\\").map(str::to_string).unwrap_or(p)),
+        None => (
+            false,
+            p.strip_prefix("\\.\\").map(str::to_string).unwrap_or(p),
+        ),
     };
     let is_unc = p.starts_with("\\");
     let (drive, rest) = if p.len() >= 2 && p.as_bytes()[1] == b':' {
@@ -68,7 +73,10 @@ pub fn canon_path(path: &str) -> String {
     let p = path.replace('/', "\\");
     let (verbatim, p) = match p.strip_prefix("\\\\?\\") {
         Some(r) => (true, r.to_string()),
-        None => (false, p.strip_prefix("\\\\.\\").map(str::to_string).unwrap_or(p)),
+        None => (
+            false,
+            p.strip_prefix("\\\\.\\").map(str::to_string).unwrap_or(p),
+        ),
     };
     let is_unc = p.starts_with("\\");
     let (drive, rest) = if p.len() >= 2 && p.as_bytes()[1] == b':' {
@@ -78,11 +86,18 @@ pub fn canon_path(path: &str) -> String {
     };
     let mut out: Vec<&str> = Vec::new();
     for (i, comp) in rest.split('\\').enumerate() {
-        if comp.is_empty() { continue; }
-        if verbatim || (is_unc && i < 2) { out.push(comp); continue; }
+        if comp.is_empty() {
+            continue;
+        }
+        if verbatim || (is_unc && i < 2) {
+            out.push(comp);
+            continue;
+        }
         match comp.trim_end_matches(['.', ' ']) {
             "" | "." => {}
-            ".." => { out.pop(); }
+            ".." => {
+                out.pop();
+            }
             c => out.push(c),
         }
     }
@@ -95,17 +110,37 @@ pub fn canon_path(path: &str) -> String {
     }
 }
 
-
-
 /// DOS reserved device names — they "exist" on every Windows machine via the
 /// DOS device namespace regardless of PATH, but nothing matching one is a
 /// spawnable PE. `spawn('con')` hits this class.
 pub fn is_device_name(file: &str) -> bool {
     let base = file.rsplit(['\\', '/']).next().unwrap_or(file);
     let stem = base.split('.').next().unwrap_or(base);
-    matches!(stem.to_ascii_uppercase().as_str(), "CON" | "PRN" | "AUX" | "NUL"
-        | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-        | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9")
+    matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    )
 }
 
 /// Join `dir` + `name` with a backslash, tolerating a trailing separator.
@@ -164,14 +199,16 @@ pub struct RealFs;
 
 impl Fs for RealFs {
     fn file_exists(&self, path: &str) -> bool {
-        std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
+        std::fs::metadata(path)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
     }
     fn is_reparse(&self, path: &str) -> bool {
         use std::os::windows::fs::MetadataExt;
         // FILE_ATTRIBUTE_REPARSE_POINT (0x400) — App Execution Aliases are
         // reparse-point stubs whose target is the Microsoft Store page.
         std::fs::metadata(path)
-            .and_then(|m| Ok(m.file_attributes()))
+            .map(|m| m.file_attributes())
             .map(|a: u32| a & 0x400 != 0)
             .unwrap_or(false)
     }
@@ -192,8 +229,6 @@ impl Fs for RealFs {
         }
         let pos = u32::from_le_bytes(off) as u64;
         let mut sig = [0u8; 4];
-        f.seek(SeekFrom::Start(pos)).is_ok()
-            && f.read_exact(&mut sig).is_ok()
-            && &sig == b"PE\0\0"
+        f.seek(SeekFrom::Start(pos)).is_ok() && f.read_exact(&mut sig).is_ok() && &sig == b"PE\0\0"
     }
 }

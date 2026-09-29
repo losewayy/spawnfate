@@ -111,7 +111,12 @@ fn parse_args(v: &Value) -> Result<Args, String> {
         .to_string();
     let args = get("args")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default();
     let shell = match get("shell").and_then(Value::as_str).unwrap_or("none") {
         "cmd" => Shell::Cmd,
@@ -122,12 +127,22 @@ fn parse_args(v: &Value) -> Result<Args, String> {
     let (env, files) = if let Some(e) = get("env") {
         let mut env = Env::default();
         let mut files = Vec::new();
-        if let Some(v) = e.get("cwd").and_then(Value::as_str) { env.cwd = v.into(); }
+        if let Some(v) = e.get("cwd").and_then(Value::as_str) {
+            env.cwd = v.into();
+        }
         if let Some(a) = e.get("path").and_then(Value::as_array) {
-            env.path = a.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            env.path = a
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
         }
         if let Some(a) = e.get("pathext").and_then(Value::as_array) {
-            env.pathext = a.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            env.pathext = a
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
         }
         if let Some(v) = e.get("cwd_missing").and_then(Value::as_bool) {
             env.cwd_missing = v;
@@ -166,13 +181,23 @@ fn parse_args(v: &Value) -> Result<Args, String> {
     } else {
         (None, vec![])
     };
-    Ok(Args { file, args, shell, target, env, files })
+    Ok(Args {
+        file,
+        args,
+        shell,
+        target,
+        env,
+        files,
+    })
 }
 
 fn human_summary(r: &Report) -> String {
     let mut s = String::new();
     for n in &r.notes {
-        s.push_str(&format!("[{:?}] {:?} {}: {}\n", n.severity, n.layer, n.rule, n.message));
+        s.push_str(&format!(
+            "[{:?}] {:?} {}: {}\n",
+            n.severity, n.layer, n.rule, n.message
+        ));
     }
     match &r.verdict {
         Verdict::Runs { argv } => s.push_str(&format!("RUNS — argv {argv:?}\n")),
@@ -199,7 +224,9 @@ pub fn run() -> i32 {
     let mut out = stdout.lock();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let req: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(e) => {
@@ -212,11 +239,14 @@ pub fn run() -> i32 {
         let method = req.get("method").and_then(Value::as_str).unwrap_or("");
         let is_notif = req.get("id").is_none();
         let resp = match method {
-            "initialize" => Some(respond(&id, json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "spawnfate", "version": env!("CARGO_PKG_VERSION")},
-            }))),
+            "initialize" => Some(respond(
+                &id,
+                json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "spawnfate", "version": env!("CARGO_PKG_VERSION")},
+                }),
+            )),
             "notifications/initialized" | "initialized" => None,
             "ping" => Some(respond(&id, json!({}))),
             "tools/list" => Some(respond(&id, json!({"tools": tools()}))),
@@ -229,20 +259,27 @@ pub fn run() -> i32 {
                     match parse_args(&params["arguments"]) {
                         Ok(a) => {
                             let input = SpawnInput {
-                                file: a.file, args: a.args, shell: a.shell,
+                                file: a.file,
+                                args: a.args,
+                                shell: a.shell,
                                 producer: Producer::Node,
                             };
                             let report = if let Some(env) = &a.env {
                                 let mut fs = VirtualFs::new();
-                                for (path, pe) in &a.files { fs = fs.file(path, *pe); }
+                                for (path, pe) in &a.files {
+                                    fs = fs.file(path, *pe);
+                                }
                                 crate::analyze(&input, env, &fs, a.target)
                             } else {
                                 crate::analyze(&input, &crate::real_env_public(), &RealFs, a.target)
                             };
-                            Some(respond(&id, json!({"content": [
-                                {"type": "text", "text": human_summary(&report)},
-                                {"type": "text", "text": serde_json::to_string_pretty(&report).unwrap()},
-                            ]})))
+                            Some(respond(
+                                &id,
+                                json!({"content": [
+                                    {"type": "text", "text": human_summary(&report)},
+                                    {"type": "text", "text": serde_json::to_string_pretty(&report).unwrap()},
+                                ]}),
+                            ))
                         }
                         Err(e) => Some(rpc_err(&id, -32602, &e)),
                     }
