@@ -1,7 +1,21 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0] — 2026-09-29
 
+- **`Producer::WinSpawn` — a fourth fate.** Models caller-resolved Windows
+  spawns: Rust `std::process::Command` / `tokio::process::Command` /
+  `deno_task_shell` / Go `os/exec`. These do a `which`-style PATH+PATHEXT
+  walk — **the working directory is never searched**, extensionless hits
+  must pass `GetBinaryTypeW` (a text shim is skipped, not run) — then
+  `CreateProcess` with MSVCRT argv quoting. `Command::new("npx")` finds
+  `npx.cmd` where Node dies ENOENT and cmd gets fooled by the bare shim.
+  New resolver `resolve_which` (R1.18); `spawnfate --producer winspawn`
+  exposes it on the CLI.
+- **selftest gained a Rust ground truth.** New `spawnprobe` helper binary
+  reproduces the which-style resolve + `Command` spawn for real; seven new
+  `winspawn` corpus cases verified against it (32 cases total, 0 diverged).
+  File-not-found now also matches raw Win32 error 2 (localized messages
+  carry the code, not English text).
 - **The L4 table is measured now, and one rule in it was wrong.** Four
   ground-truth probes (MSVC CRT, shell32 `CommandLineToArgvW`, go1.27.1, a Rust
   binary) were fed the same crafted command lines through a verbatim

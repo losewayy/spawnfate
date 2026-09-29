@@ -1,6 +1,6 @@
 [package]
 name = "spawnfate"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Predict the fate of a Windows command line before you spawn it — layered simulation of name resolution, argv serialization, cmd.exe re-parsing, and target argv parsing."
 license = "MIT OR Apache-2.0"

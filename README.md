@@ -29,9 +29,11 @@ $ spawnfate npx -v
 
 The `npx` shim is sitting right there on PATH — but `spawn('npx')` still fails,
 because **libuv's candidate list only ever tries `.com` and `.exe`**. Meanwhile
-`spawn('npx.cmd')` throws `EINVAL` (CVE-2024-27980), and `spawn('npx', {shell:true})`
+`spawn('npx.cmd')` throws `EINVAL` (CVE-2024-27980), `spawn('npx', {shell:true})`
 works — but only because cmd.exe re-resolves the name under completely different
-rules. Three resolvers, three fates. This tool shows all of them.
+rules — and Rust's `Command::new("npx")` finds `npx.cmd` through a *fourth*
+resolver (`which`-style: PATH only, never CWD, PE-verified). Four resolvers,
+four fates. This tool shows all of them.
 
 ## Why this exists
 
@@ -43,10 +45,13 @@ returns `InvalidInput` for unescapable args, and the error messages never say
 
 What it does that nothing else does:
 
-- **Three resolvers, modeled separately.** `CreateProcess` built-in search,
-  libuv's `search_path` (`.com`/`.exe` only, CWD-first, PATHEXT ignored), and
-  cmd's own PATH/PATHEXT walk. The same name resolves differently depending on
-  which one is asking — that difference *is* the bug half the time.
+- **Four resolvers, modeled separately.** `CreateProcess` built-in search,
+  libuv's `search_path` (`.com`/`.exe` only, CWD-first, PATHEXT ignored),
+  cmd's own PATH/PATHEXT walk, and `which`-style caller resolution
+  (PATH only, never CWD, `GetBinaryTypeW` for extensionless hits — what Rust
+  `Command` / deno_task_shell / Go `exec` do). The same name resolves
+  differently depending on which one is asking — that difference *is* the
+  bug half the time.
 - **cmd.exe re-parse.** The `/c`/`/s` quote-strip decision, metachar hazard scan
   (`& | < > ^`), `%VAR%` expansion (fires even inside quotes), delayed
   `!expansion!`, newline injection.
@@ -60,8 +65,9 @@ What it does that nothing else does:
 ## Verified against reality
 
 `spawnfate selftest` materializes each corpus case's declared filesystem into a
-temp dir and runs a **real `node` spawn** with the remapped `PATH`/`cwd`, then
-compares what actually happened with what we predicted.
+temp dir and runs a **real `node` spawn** (or the bundled Rust `spawnprobe` for
+`winspawn` cases) with the remapped `PATH`/`cwd`, then compares what actually
+happened with what we predicted.
 
 ```console
 $ spawnfate selftest
@@ -70,7 +76,7 @@ $ spawnfate selftest
   ok   node-explicit-sh-193          (Node reports EFTYPE — libuv maps 193)
   ok   cmd-resolver-sees-pathext
   ...
-selftest: 19 verified against real spawn, 0 diverged
+selftest: 32 verified against real spawn, 0 diverged
 ```
 
 Predictions that disagree with reality are bugs in the model, and the suite
@@ -84,6 +90,10 @@ spawnfate npx -y pkg "C:\My Dir\"
 
 # same call but through shell:true (cmd.exe re-parse)
 spawnfate --shell npx -v
+
+# Rust/Go/deno-style spawn instead: Command::new("npx") — the which-style
+# resolver finds npx.cmd where Node dies ENOENT (CWD is never searched)
+spawnfate --producer winspawn npx -v
 
 # the target is a Go binary, not an MSVCRT program?
 spawnfate --target go prog "a""b c"
