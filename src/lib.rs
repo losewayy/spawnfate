@@ -803,6 +803,16 @@ fn first_token_r02(line: &str) -> (String, bool) {
 
 /// Build Env from the live process environment.
 pub fn real_env_public() -> Env {
+    Env {
+        node_bat_guard: node_bat_guard_public(),
+        ..real_env_no_node_probe()
+    }
+}
+
+/// Build Env from the live process environment WITHOUT probing `node -v`
+/// (one subprocess spawn per call). For callers whose model never consults
+/// `node_bat_guard` — anything not predicting Node EINVAL.
+pub fn real_env_no_node_probe() -> Env {
     let get = |k: &str| std::env::var(k).unwrap_or_default();
     Env {
         cwd: std::env::current_dir()
@@ -833,7 +843,6 @@ pub fn real_env_public() -> Env {
         } else {
             get("WINDIR")
         },
-        node_bat_guard: node_bat_guard_public(),
         vars: std::env::vars()
             .map(|(k, v)| (k.to_ascii_uppercase(), v))
             .collect(),
