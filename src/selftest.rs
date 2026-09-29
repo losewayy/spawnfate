@@ -72,16 +72,25 @@ fn materialize(case: &Case, env: &Env, root: &Path) {
                 std::fs::copy(&probe, &dst).unwrap();
             } else {
                 std::fs::copy(r"C:\Windows\System32\hostname.exe", &dst)
-                    .map(|_| ()).or_else(|_| std::fs::write(&dst, "MZ"))
+                    .map(|_| ())
+                    .or_else(|_| std::fs::write(&dst, "MZ"))
                     .unwrap();
             }
         } else if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-            std::fs::write(&dst, "@echo BATARGV=%*
+            std::fs::write(
+                &dst,
+                "@echo BATARGV=%*
 @exit /b 0
-").unwrap();
+",
+            )
+            .unwrap();
         } else {
-            std::fs::write(&dst, "not a PE
-").unwrap();
+            std::fs::write(
+                &dst,
+                "not a PE
+",
+            )
+            .unwrap();
         }
     }
 }
@@ -93,7 +102,22 @@ fn printargv_probe() -> PathBuf {
     let local = dir.join("printargv.exe");
     if !local.exists() {
         // ask cargo to build it — selftest is a dev-mode command
-        let _ = Command::new("cargo").args(["build", "--bin", "printargv"]).status();
+        let _ = Command::new("cargo")
+            .args(["build", "--bin", "printargv"])
+            .status();
+    }
+    local
+}
+
+/// spawnprobe.exe — the Rust ground-truth runner for WinSpawn cases.
+fn spawnprobe_probe() -> PathBuf {
+    let exe = std::env::current_exe().unwrap();
+    let dir = exe.parent().unwrap().to_path_buf();
+    let local = dir.join("spawnprobe.exe");
+    if !local.exists() {
+        let _ = Command::new("cargo")
+            .args(["build", "--bin", "spawnprobe"])
+            .status();
     }
     local
 }
@@ -120,7 +144,14 @@ fn spawn_real(case: &Case, env: &Env, root: &Path, harness: &Path) -> Observed {
         .arg(&args)
         .arg(&opts)
         .env("SF_CWD", remap(&env.cwd, root))
-        .env("SF_PATH", env.path.iter().map(|p| remap(p, root)).collect::<Vec<_>>().join(";"))
+        .env(
+            "SF_PATH",
+            env.path
+                .iter()
+                .map(|p| remap(p, root))
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
         .env("SF_PATHEXT", env.pathext.join(";"))
         .env("ComSpec", env.comspec.clone())
         .env("SystemRoot", r"C:\Windows")
@@ -147,6 +178,50 @@ fn spawn_real(case: &Case, env: &Env, root: &Path, harness: &Path) -> Observed {
     Observed::Err(format!("unparsed: {text}"))
 }
 
+/// Ground truth for `Producer::WinSpawn`: the Rust probe binary does the
+/// which-style resolve + `Command` spawn itself.
+fn spawn_real_winspawn(case: &Case, env: &Env, root: &Path, probe: &Path) -> Observed {
+    let file = remap(&case.input.file, root);
+    let args = serde_json::to_string(&case.input.args).unwrap();
+    let out = Command::new(probe)
+        .arg(&file)
+        .arg(&args)
+        .env("SF_CWD", remap(&env.cwd, root))
+        .env(
+            "SF_PATH",
+            env.path
+                .iter()
+                .map(|p| remap(p, root))
+                .collect::<Vec<_>>()
+                .join(";"),
+        )
+        .env("SF_PATHEXT", env.pathext.join(";"))
+        .env("ComSpec", env.comspec.clone())
+        .env("SystemRoot", r"C:\Windows")
+        .output()
+        .expect("failed to run spawnprobe");
+    let text = String::from_utf8_lossy(&out.stdout);
+    if let Some(line) = text.lines().find(|l| l.starts_with("ERR resolve")) {
+        let _ = line;
+        return Observed::Err("ENOENT".into());
+    }
+    if let Some(line) = text.lines().find(|l| l.starts_with("ERR ")) {
+        return Observed::Err(line[4..].trim().to_string());
+    }
+    if let Some(line) = text.lines().find(|l| l.starts_with("EXIT ")) {
+        let code = line[5..]
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<i32>().ok());
+        let payload = text
+            .lines()
+            .find(|l| l.starts_with("CHILDOUT "))
+            .map(|l| l[9..].to_string());
+        return Observed::Exit(code, payload);
+    }
+    Observed::Err(format!("unparsed: {text}"))
+}
+
 /// Compare predicted verdict with observed spawn result. Returns Ok/Fail note.
 fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String> {
     let shell = case.input.shell != "none";
@@ -166,14 +241,18 @@ fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String>
                                     return Err(format!("argv mismatch — predicted {want:?}, child received {got:?}"));
                                 }
                             }
-                            Err(e) => return Err(format!("ARGVPAYLOAD unparsable: {e} — {json:?}")),
+                            Err(e) => {
+                                return Err(format!("ARGVPAYLOAD unparsable: {e} — {json:?}"))
+                            }
                         }
                     }
                     if let Some(tail) = l.strip_prefix("BATARGV=") {
                         let want = case.input.args.join(" ");
                         let got = tail.trim().to_string();
                         if want != got {
-                            return Err(format!("batch %* mismatch — predicted {want:?}, cmd saw {got:?}"));
+                            return Err(format!(
+                                "batch %* mismatch — predicted {want:?}, cmd saw {got:?}"
+                            ));
                         }
                     }
                 }
@@ -181,22 +260,45 @@ fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String>
             Ok(())
         }
         // Inside cmd, a resolution failure surfaces as exit≠0, not a spawn err.
-        (Verdict::Dies { layer: Layer::Resolve, .. }, Observed::Exit(Some(c), _))
-            if shell && *c != 0 => Ok(()),
-        (Verdict::Dies { error: Error::FileNotFound, .. }, Observed::Err(e))
-            if e.contains("ENOENT") => Ok(()),
-        (Verdict::Dies { error: Error::EinvalBatch, .. }, Observed::Err(e))
-            if e.contains("EINVAL") => Ok(()),
+        (
+            Verdict::Dies {
+                layer: Layer::Resolve,
+                ..
+            },
+            Observed::Exit(Some(c), _),
+        ) if shell && *c != 0 => Ok(()),
+        // FileNotFound surfaces as ENOENT under libuv, or as raw Win32
+        // error 2 from the Rust probe (localized message — match the code).
+        (
+            Verdict::Dies {
+                error: Error::FileNotFound,
+                ..
+            },
+            Observed::Err(e),
+        ) if e.contains("ENOENT") || e.starts_with("2 ") || e.contains("os error 2") => Ok(()),
+        (
+            Verdict::Dies {
+                error: Error::EinvalBatch,
+                ..
+            },
+            Observed::Err(e),
+        ) if e.contains("EINVAL") => Ok(()),
         // ERROR_BAD_EXE_FORMAT surfaces in Node as `EFTYPE`
-        // (libuv maps 193 → UV_EFTYPE) — measured on Node v24.
-        (Verdict::Dies { error: Error::BadExeFormat, .. }, Observed::Err(e))
-            if e.contains("EFTYPE") || e.contains("UNKNOWN") || e.contains("193") => Ok(()),
+        // (libuv maps 193 → UV_EFTYPE) — measured on Node v24; the Rust
+        // probe reports the raw OS error which also contains 193.
+        (
+            Verdict::Dies {
+                error: Error::BadExeFormat,
+                ..
+            },
+            Observed::Err(e),
+        ) if e.contains("EFTYPE") || e.contains("UNKNOWN") || e.contains("193") => Ok(()),
         (Verdict::Runs { .. }, Observed::Err(e)) => {
             Err(format!("predicted runs, observed spawn error {e}"))
         }
-        (Verdict::Dies { error, layer }, Observed::Exit(Some(c), _)) => {
-            Err(format!("predicted dies@{layer:?}/{error:?}, observed exit {c}"))
-        }
+        (Verdict::Dies { error, layer }, Observed::Exit(Some(c), _)) => Err(format!(
+            "predicted dies@{layer:?}/{error:?}, observed exit {c}"
+        )),
         // UnsafeUnserializable: the child DOES run — the claim is that argv
         // can't arrive intact. Verdict-level check accepts Exit; fidelity is
         // verified by argv-level compare (printargv, v0.2).
@@ -206,16 +308,23 @@ fn compare(case: &Case, verdict: &Verdict, obs: &Observed) -> Result<(), String>
 }
 
 pub fn run(corpus_dir: &Path) -> i32 {
-    // Prereq: node must exist to be the ground-truth spawner.
-    if Command::new("node").arg("-v").output().is_err() {
-        eprintln!("selftest: `node` not on PATH — skipped (prediction-only corpus still runs in `cargo test`)");
-        return 0;
+    let has_node = Command::new("node").arg("-v").output().is_ok();
+    if !has_node {
+        eprintln!("selftest: `node` not on PATH — node-producer cases skipped (prediction-only corpus still runs in `cargo test`)");
     }
     let corpora = corpus::load(corpus_dir);
-    let cases: Vec<&Case> = corpora
+    let all: Vec<&Case> = corpora
         .iter()
         .flat_map(|(_, c)| c.cases.iter())
-        .filter(|c| c.selftest && c.input.producer == "node")
+        .filter(|c| c.selftest)
+        .collect();
+    let cases: Vec<&Case> = all
+        .into_iter()
+        .filter(|c| match c.input.producer.as_str() {
+            "node" => has_node,
+            "winspawn" => true,
+            _ => false,
+        })
         .collect();
 
     let stamp = std::time::SystemTime::now()
@@ -226,6 +335,7 @@ pub fn run(corpus_dir: &Path) -> i32 {
     let harness = root.join("harness.js");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(&harness, HARNESS).unwrap();
+    let probe = spawnprobe_probe();
 
     let mut pass = 0;
     let mut fail = 0;
@@ -235,9 +345,15 @@ pub fn run(corpus_dir: &Path) -> i32 {
         let (_input, env, vfs, target) = corpus::build(case);
         materialize(case, &env, &case_root);
         // node_bat_guard is a property of this machine's node — honor it.
-        let env = Env { node_bat_guard: true, ..env };
+        let env = Env {
+            node_bat_guard: true,
+            ..env
+        };
         let report = crate::analyze(&_input, &env, &vfs, target);
-        let obs = spawn_real(case, &env, &case_root, &harness);
+        let obs = match case.input.producer.as_str() {
+            "winspawn" => spawn_real_winspawn(case, &env, &case_root, &probe),
+            _ => spawn_real(case, &env, &case_root, &harness),
+        };
         match compare(case, &report.verdict, &obs) {
             Ok(()) => {
                 pass += 1;
@@ -251,5 +367,9 @@ pub fn run(corpus_dir: &Path) -> i32 {
     }
     let _ = std::fs::remove_dir_all(&root);
     println!("selftest: {pass} verified against real spawn, {fail} diverged");
-    if fail > 0 { 1 } else { 0 }
+    if fail > 0 {
+        1
+    } else {
+        0
+    }
 }

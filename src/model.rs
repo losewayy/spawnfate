@@ -12,6 +12,12 @@ pub enum Producer {
     /// Raw `CreateProcessW` with `lpApplicationName = NULL` — the command line
     /// is already serialized and the first token is the module name.
     RawCommandLine,
+    /// Caller-resolved Windows spawn — Rust's `std::process::Command` family
+    /// (which/Go `LookPath` style PATHEXT resolution → absolute path →
+    /// `CreateProcess` with MSVCRT argv quoting). `.bat`/`.cmd` hits route
+    /// through the OS's implicit cmd.exe substitution; there is no Node
+    /// EINVAL gate.
+    WinSpawn,
 }
 
 /// The `shell` option as Node understands it.

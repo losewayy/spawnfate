@@ -59,8 +59,6 @@ fn probe(dirs: &[String], candidates: Vec<String>, fs: &dyn Fs) -> Resolution {
     }
 }
 
-
-
 /// **libuv `search_path`** — what Node `spawn` actually runs (R1.14).
 ///
 /// - name with a dir separator → CWD-relative only, literal probe
@@ -87,10 +85,18 @@ pub fn resolve_libuv(name: &str, env: &Env, fs: &dyn Fs) -> Resolution {
         for c in &candidates {
             tried.push(c.clone());
             if fs.file_exists(c) {
-                return Resolution { found: Some(canon_path(c)), tried, shadowed: vec![] };
+                return Resolution {
+                    found: Some(canon_path(c)),
+                    tried,
+                    shadowed: vec![],
+                };
             }
         }
-        return Resolution { found: None, tried, shadowed: vec![] };
+        return Resolution {
+            found: None,
+            tried,
+            shadowed: vec![],
+        };
     }
     let dirs: Vec<String> = std::iter::once(env.cwd.clone())
         .chain(env.path.iter().cloned())
@@ -195,6 +201,65 @@ pub fn resolve_createprocess(name: &str, env: &Env, fs: &dyn Fs) -> Resolution {
         vec![name.to_string(), format!("{name}.exe")]
     };
     probe(&dirs, candidates, fs)
+}
+
+/// Does this name bypass the PATH walk entirely? Dir-separator names are
+/// joined against the cwd and handed to CreateProcess unconditionally —
+/// `which` is never consulted for them.
+pub fn resolve_which_hits_directly(name: &str) -> bool {
+    has_dir_sep(name)
+}
+
+/// **`which`-style resolution** — what the `which` crate does (used by
+/// `deno_task_shell`, closest kin to Go's `exec.LookPath`) (R1.18):
+///
+/// - PATH dirs only — the working directory is NOT searched (unlike cmd)
+/// - name with a dir separator → never probed here at all; the caller hands
+///   the joined path to CreateProcess unconditionally
+/// - bare name, per dir: probe `name` first — but an extensionless hit only
+///   wins when `GetBinaryTypeW` accepts it (a real PE); a text shim is
+///   *skipped*, not run — then `name` + each PATHEXT suffix, in order
+/// - name already carrying an extension → literal probe, existence wins
+///   (any extension counts as "executable" at this stage — a `.sh` resolves
+///   and then dies at CreateProcess)
+pub fn resolve_which(name: &str, env: &Env, fs: &dyn Fs) -> Resolution {
+    let name_has_ext = has_ext(name);
+    let mut tried = Vec::new();
+    let mut shadowed = Vec::new();
+    for dir in &env.path {
+        let bare = join(dir, name);
+        tried.push(bare.clone());
+        if fs.file_exists(&bare) {
+            // Extensionless candidates must survive GetBinaryTypeW; anything
+            // with an extension wins on existence alone.
+            if name_has_ext || fs.is_pe(&bare) {
+                return Resolution {
+                    found: Some(bare),
+                    tried,
+                    shadowed,
+                };
+            }
+            shadowed.push(bare);
+        }
+        if !name_has_ext {
+            for e in &env.pathext {
+                let full = join(dir, &format!("{name}{e}"));
+                tried.push(full.clone());
+                if fs.file_exists(&full) {
+                    return Resolution {
+                        found: Some(full),
+                        tried,
+                        shadowed,
+                    };
+                }
+            }
+        }
+    }
+    Resolution {
+        found: None,
+        tried,
+        shadowed,
+    }
 }
 
 /// The basename check for Node's EINVAL gate — case-insensitive `.bat`/`.cmd`

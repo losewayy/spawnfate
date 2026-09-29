@@ -5,7 +5,10 @@ use spawnfate::fs::RealFs;
 use spawnfate::model::*;
 
 #[derive(Parser)]
-#[command(version, about = "Predict what happens to a Windows command line before you spawn it")]
+#[command(
+    version,
+    about = "Predict what happens to a Windows command line before you spawn it"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -19,6 +22,11 @@ struct Cli {
     /// Simulate Node `shell: true` (routes through cmd.exe verbatim)
     #[arg(short, long)]
     shell: bool,
+
+    /// Which runtime produced the spawn call — each resolves and
+    /// serializes differently (default: node)
+    #[arg(long, value_enum, default_value = "node")]
+    producer: Prod,
 
     /// Assume the target program's argv parser (L4)
     #[arg(short, long, value_enum, default_value = "msvcrt")]
@@ -43,6 +51,25 @@ enum Cmd {
     Selftest,
     /// Run as an MCP server over stdio (agents call the analyze_spawn tool)
     Mcp,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Prod {
+    /// Node.js child_process.spawn — libuv semantics (default)
+    Node,
+    /// Caller-resolved Windows spawn — Rust std::process / deno_task_shell /
+    /// Go os/exec: which-style PATH+PATHEXT resolve, then CreateProcess with
+    /// MSVCRT quoting. No libuv resolver, no Node EINVAL gate.
+    Winspawn,
+}
+
+impl From<Prod> for Producer {
+    fn from(p: Prod) -> Self {
+        match p {
+            Prod::Node => Producer::Node,
+            Prod::Winspawn => Producer::WinSpawn,
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -105,7 +132,7 @@ fn main() {
                 file,
                 args: cli.args,
                 shell: if cli.shell { Shell::Cmd } else { Shell::None },
-                producer: Producer::Node,
+                producer: cli.producer.into(),
             };
             run(&input, cli.target.into(), cli.json);
         }

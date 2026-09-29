@@ -66,6 +66,7 @@
 - **R1.15** [推导] 推论：`spawn('npx')` 撞上 PATH 里的 bash shim `npx` → **ENOENT**（裸名根本不在 libuv 的尝试表里）；`spawn('npx.sh')` → 找到 → CreateProcess → 193（[EMP] Node 报 `EFTYPE`，selftest 实测）；`spawn('npx.cmd')` → EINVAL（R1.11）。
 - **R1.16** [DOC] cmd `/c` 重解析：CWD 优先（NoCurrentDirectoryInExePath 可关）→ PATH；试裸名 + PATHEXT 全表（默认 `.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC`）。**cmd 会找到无扩展名 bash shim——然后把它当批文本喂给 cmd**（语料库必测项：实际命运是逐行执行还是报错）。
 - **R1.17** [DOC] CreateProcess 内建顺序里**父进程应用目录先于 CWD**——与 libuv/cmd 都不同序。
+- **R1.18** [SRC] `which` crate 解析器（`deno_task_shell` / Go `exec.LookPath` 同款）：**CWD 完全不搜**——只有 PATH 逐条；含目录分隔符的名字根本不走 which（调用方按 cwd 拼接后直接交给 CreateProcess，存在性在 exec 层裁决）；每个目录先试裸名但**无扩展名命中必须过 GetBinaryTypeW**（文本 shim 被跳过继续找），然后试 `name+PATHEXT` 各后缀；名字自带扩展名 → 字面命中即胜（存在即算"可执行"，`.sh` 会解析成功然后死在 CreateProcess 193）。这是第四种命运：`Command::new("npx")` 找得到 `npx.cmd`（Node ENOENT、cmd 被裸 shim 骗、which 验 PE 跳过）。
 - **[UNC]** libuv `UV_PROCESS_WINDOWS_RESOLVE_BATCH`（PR #5096）若落地，libuv 表将含 `.bat/.cmd`——规则引擎要留"libuv 版本特征"维度。
 
 ## Layer 2 — cmd.exe 重解析

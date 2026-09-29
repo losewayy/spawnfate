@@ -431,3 +431,118 @@ cases:
     expect:
       verdict: runs
       notes_rule: ['R0.9']
+
+  # ── Producer::WinSpawn — Rust std::process / deno_task_shell / Go os/exec ──
+  # The fourth fate: a `which`-style PATH+PATHEXT walk (CWD not searched,
+  # extensionless hits must be real PEs) then CreateProcess with MSVCRT
+  # quoting. No libuv table, no Node EINVAL gate.
+
+  - id: winspawn-npx-finds-cmd
+    title: Command::new("npx") finds npx.cmd via PATHEXT — where Node dies ENOENT
+    rules: [R1.18, R0.4]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+        - {path: 'C:\tools\nodejs\node.exe', pe: true}
+    input: {producer: winspawn, file: npx, args: ['-v'], shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: npx.cmd
+      notes_rule: ['R0.4']
+
+  - id: winspawn-cwd-not-searched
+    title: a tool.exe in CWD is INVISIBLE to the which-style walk — unlike cmd
+    rules: [R1.18]
+    env:
+      cwd: C:\work
+      path: ['C:\tools']
+      files:
+        - {path: 'C:\work\tool.exe', pe: true}
+        - {path: 'C:\tools\tool.exe', pe: true}
+    input: {producer: winspawn, file: tool, shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: 'C:\tools\tool.exe'
+
+  - id: winspawn-cwd-plant-unfound
+    title: only a CWD copy exists → dies at Resolve (cmd would have found it)
+    rules: [R1.18]
+    env:
+      cwd: C:\work
+      path: ['C:\tools']
+      files:
+        - {path: 'C:\work\tool.exe', pe: true}
+    input: {producer: winspawn, file: tool, shell: none}
+    expect:
+      verdict: dies
+      error: FileNotFound
+      layer: Resolve
+
+  - id: winspawn-bare-shim-skipped
+    title: extensionless bash shim fails GetBinaryTypeW — skipped, npx.cmd wins
+    rules: [R1.18]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx'}      # scoop bash shim, exists but not a PE
+        - {path: 'C:\tools\nodejs\npx.cmd'}
+    input: {producer: winspawn, file: npx, shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: npx.cmd
+      notes_contain: ["GetBinaryTypeW"]
+
+  - id: winspawn-sh-file-193
+    title: explicit .sh resolves on existence, dies 193 at CreateProcess
+    rules: [R1.18, R0.5]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\npx.sh'}
+    input: {producer: winspawn, file: npx.sh, shell: none}
+    expect:
+      verdict: dies
+      error: BadExeFormat
+      layer: Exec
+
+  - id: winspawn-exe-plain-run
+    title: Command::new("node") resolves node.exe, argv round-trips
+    rules: [R1.18]
+    env:
+      cwd: C:\work
+      path: ['C:\tools\nodejs']
+      files:
+        - {path: 'C:\tools\nodejs\node.exe', pe: true}
+    input: {producer: winspawn, file: node, args: ['-v'], shell: none}
+    expect:
+      verdict: runs
+      resolved_contains: node.exe
+
+  - id: winspawn-bat-quote-invalidinput
+    title: batch target + quoted arg → unsafe serialization (Rust EINVAL-class)
+    rules: [R2.11, R0.4]
+    selftest: false
+    env:
+      cwd: C:\work
+      path: ['C:\tools']
+      files:
+        - {path: 'C:\tools\go.cmd'}
+    input: {producer: winspawn, file: go, args: ['say "hi"'], shell: none}
+    expect:
+      verdict: unsafe
+
+  - id: winspawn-dirsep-missing
+    title: dir-separator name bypasses which — missing file dies at exec
+    rules: [R1.18, R0.2]
+    env:
+      cwd: C:\work
+      path: ['C:\tools']
+    input: {producer: winspawn, file: '.\nope.exe', shell: none}
+    expect:
+      verdict: dies
+      error: FileNotFound
+      layer: Exec

@@ -9,9 +9,9 @@ pub mod cmd;
 pub mod corpus;
 pub mod explain;
 pub mod fs;
+pub mod mcp;
 pub mod model;
 pub mod resolve;
-pub mod mcp;
 pub mod selftest;
 pub mod serialize;
 
@@ -19,8 +19,8 @@ use argv::split;
 use cmd::{apply_c_quotes, expand_percent, scan_hazards};
 use fs::{canon, is_device_name, Fs};
 use model::*;
-use resolve::{is_batch_literal, resolve_cmd, resolve_createprocess, resolve_libuv};
-use serialize::{node_command_line, NodeLine};
+use resolve::{is_batch_literal, resolve_cmd, resolve_createprocess, resolve_libuv, resolve_which};
+use serialize::{join_quoted, node_command_line, NodeLine};
 
 /// Predict `input`'s fate under `env`, with `fs` as the filesystem oracle and
 /// `target` as the assumed argv parser of the spawned program (L4).
@@ -94,7 +94,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                         layer: Layer::Serialize,
                         error: Error::EinvalBatch,
                     };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                    return Report {
+                        resolved,
+                        command_line,
+                        cmd_effective,
+                        notes,
+                        verdict,
+                        suggestions,
+                    };
                 }
                 // R1.14: libuv's resolver — .com/.exe only, never the bare
                 // name, never PATHEXT.
@@ -128,7 +135,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             layer: Layer::Resolve,
                             error: Error::FileNotFound,
                         };
-                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
                     }
                     Some(path) => {
                         resolved = Some(path.clone());
@@ -165,7 +179,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                                 layer: Layer::Exec,
                                 error: Error::BadExeFormat,
                             };
-                            return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                            return Report {
+                                resolved,
+                                command_line,
+                                cmd_effective,
+                                notes,
+                                verdict,
+                                suggestions,
+                            };
                         }
                         notes.push(Note {
                             layer: Layer::Resolve,
@@ -224,7 +245,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             text: "pass the value via an environment variable or a temp file, or replace the batch target with a real binary".into(),
                         });
                         verdict = Verdict::UnsafeUnserializable;
-                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
                     }
                     notes.push(Note {
                         layer: Layer::Resolve,
@@ -236,16 +264,21 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     let tail = if let Some(s) = cl.strip_prefix('"') {
                         s.find('"').map(|p| &cl[p + 2..]).unwrap_or("")
                     } else {
-                        cl.find(|c: char| c == ' ' || c == '\t')
-                            .map(|p| &cl[p..])
-                            .unwrap_or("")
+                        cl.find([' ', '\t']).map(|p| &cl[p..]).unwrap_or("")
                     };
                     let tail = tail.trim_start().to_string();
                     let argv = split(&tail, TargetParser::Batch);
                     let mut full = vec![input.file.clone()];
                     full.extend(argv);
                     verdict = Verdict::Runs { argv: full };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                    return Report {
+                        resolved,
+                        command_line,
+                        cmd_effective,
+                        notes,
+                        verdict,
+                        suggestions,
+                    };
                 }
                 let argv = split(&cl, target);
                 // Round-trip check: argv[1..] must equal input.args under the
@@ -266,7 +299,10 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
             Shell::Cmd => {
                 // R1.9: raw join, verbatim /d /s /c "<raw>".
                 let (raw, tail) = match node_command_line(&input.file, &input.args, &input.shell) {
-                    NodeLine::CmdWrapped { raw_join, full_tail } => (raw_join, full_tail),
+                    NodeLine::CmdWrapped {
+                        raw_join,
+                        full_tail,
+                    } => (raw_join, full_tail),
                     _ => unreachable!(),
                 };
                 notes.push(Note {
@@ -297,8 +333,17 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                     });
                 }
                 for (rule, msg) in exp_notes {
-                    let sev = if rule.ends_with("inject") { Severity::Fatal } else { Severity::Warn };
-                    notes.push(Note { layer: Layer::CmdParse, severity: sev, rule, message: msg });
+                    let sev = if rule.ends_with("inject") {
+                        Severity::Fatal
+                    } else {
+                        Severity::Warn
+                    };
+                    notes.push(Note {
+                        layer: Layer::CmdParse,
+                        severity: sev,
+                        rule,
+                        message: msg,
+                    });
                 }
                 cmd_effective = Some(eff.clone());
                 notes.push(Note {
@@ -327,13 +372,20 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                         layer: Layer::Resolve,
                         severity: Severity::Info,
                         rule: "cmd-builtin",
-                        message: format!("\"{first}\" is a cmd builtin — no file resolution happens"),
+                        message: format!(
+                            "\"{first}\" is a cmd builtin — no file resolution happens"
+                        ),
                     });
                     resolved = Some(format!("(cmd builtin) {first}"));
-                    verdict = Verdict::Runs {
-                        argv: vec![first],
+                    verdict = Verdict::Runs { argv: vec![first] };
+                    return Report {
+                        resolved,
+                        command_line,
+                        cmd_effective,
+                        notes,
+                        verdict,
+                        suggestions,
                     };
-                    return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
                 }
                 let res = resolve_cmd(&first, env, fs);
                 match &res.found {
@@ -370,7 +422,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                                     text: "pass the value via an environment variable or a temp file, or replace the batch target with a real binary".into(),
                                 });
                                 verdict = Verdict::UnsafeUnserializable;
-                                return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                                return Report {
+                                    resolved,
+                                    command_line,
+                                    cmd_effective,
+                                    notes,
+                                    verdict,
+                                    suggestions,
+                                };
                             }
                         }
                         let argv = if is_batch {
@@ -448,7 +507,14 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                             layer: Layer::Exec,
                             error: Error::BadExeFormat,
                         };
-                        return Report { resolved, command_line, cmd_effective, notes, verdict, suggestions };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
                     }
                     let argv = split(line, target);
                     verdict = Verdict::Runs { argv };
@@ -458,6 +524,203 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                         layer: Layer::Resolve,
                         error: Error::FileNotFound,
                     };
+                }
+            }
+        }
+        Producer::WinSpawn => {
+            // Caller-resolved Windows spawn (R1.18): Rust std::process /
+            // deno_task_shell / Go os/exec resolve `file` with a `which`-style
+            // PATH+PATHEXT walk — CWD is NOT searched — then CreateProcess
+            // gets an absolute path and argv quoted MSVCRT-style.
+            // No libuv resolver, no Node EINVAL gate.
+            //
+            // A name carrying a dir separator never reaches `which` — the
+            // caller joins it against the cwd and hands it to CreateProcess
+            // unconditionally; existence is decided at the exec layer.
+            let found: Option<String> = if crate::resolve::resolve_which_hits_directly(&input.file)
+            {
+                if input.file.contains(':') || input.file.starts_with(['\\', '/']) {
+                    Some(input.file.clone())
+                } else {
+                    Some(crate::fs::join(&env.cwd, &input.file))
+                }
+            } else {
+                let res = resolve_which(&input.file, env, fs);
+                for s in &res.shadowed {
+                    notes.push(Note {
+                        layer: Layer::Resolve,
+                        severity: Severity::Info,
+                        rule: "R1.18",
+                        message: format!(
+                            "\"{s}\" exists but GetBinaryTypeW rejects it (not a PE) — the which-style resolver skips it and keeps looking",
+                        ),
+                    });
+                }
+                if res.found.is_none() {
+                    notes.push(Note {
+                        layer: Layer::Resolve,
+                        severity: Severity::Fatal,
+                        rule: "R1.18",
+                        message: format!(
+                            "PATH+PATHEXT search tried {} candidate(s), none usable — spawn fails 'file not found' before reaching CreateProcess",
+                            res.tried.len()
+                        ),
+                    });
+                    suggestions.push(Suggestion {
+                        id: "check-path",
+                        text: "the name is invisible to a PATH+PATHEXT walk — check `where <name>`; a file that exists only in the working directory is NOT found (unlike cmd.exe)".into(),
+                    });
+                }
+                res.found
+            };
+            match found {
+                None => {
+                    verdict = Verdict::Dies {
+                        layer: Layer::Resolve,
+                        error: Error::FileNotFound,
+                    };
+                    return Report {
+                        resolved,
+                        command_line,
+                        cmd_effective,
+                        notes,
+                        verdict,
+                        suggestions,
+                    };
+                }
+                Some(path) => {
+                    resolved = Some(path.clone());
+                    if !fs.file_exists(&path) {
+                        // dir-sep name, never probed — CreateProcess says no.
+                        notes.push(Note {
+                            layer: Layer::Exec,
+                            severity: Severity::Fatal,
+                            rule: "R0.2",
+                            message: format!("\"{path}\" does not exist — CreateProcess fails ERROR_FILE_NOT_FOUND"),
+                        });
+                        verdict = Verdict::Dies {
+                            layer: Layer::Exec,
+                            error: Error::FileNotFound,
+                        };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
+                    }
+                    flag_resolved(&path, fs, &mut notes);
+                    let is_batch = canon(&path).ends_with(".bat") || canon(&path).ends_with(".cmd");
+                    if is_batch {
+                        // R0.4: CreateProcess substitutes System32\cmd.exe for
+                        // batch files — there is no EINVAL here, but the args
+                        // are re-tokenized under batch rules.
+                        notes.push(Note {
+                            layer: Layer::Resolve,
+                            severity: Severity::Warn,
+                            rule: "R0.4",
+                            message: format!("resolved \"{path}\" is a batch file — CreateProcess silently substitutes System32\\cmd.exe; args are re-tokenized under batch rules (R2.10), not argv"),
+                        });
+                    } else if !fs.is_pe(&path) {
+                        // R0.5: exists but cannot load → 193, not ENOENT.
+                        notes.push(Note {
+                            layer: Layer::Exec,
+                            severity: Severity::Fatal,
+                            rule: "R0.5",
+                            message: format!(
+                                "\"{path}\" is not a PE image and not a batch file — CreateProcess fails ERROR_BAD_EXE_FORMAT (193)"
+                            ),
+                        });
+                        suggestions.push(Suggestion {
+                            id: "not-a-pe",
+                            text: "the resolved file exists but isn't a PE — likely a POSIX shim or data file. Check `where <name>` and point at the real executable".into(),
+                        });
+                        verdict = Verdict::Dies {
+                            layer: Layer::Exec,
+                            error: Error::BadExeFormat,
+                        };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
+                    }
+                    notes.push(Note {
+                        layer: Layer::Resolve,
+                        severity: Severity::Info,
+                        rule: "R1.18",
+                        message: format!("resolved → {path}"),
+                    });
+                    // Rust/CreateProcess argv: argv0 = the resolved path
+                    // (Command::new(resolved)), argv quoted MSVCRT-style
+                    // (R1.3/R1.6 equivalents).
+                    let cl = join_quoted(
+                        std::iter::once(path.as_str()).chain(input.args.iter().map(String::as_str)),
+                    );
+                    command_line = Some(cl.clone());
+                    notes.push(Note {
+                        layer: Layer::Serialize,
+                        severity: Severity::Info,
+                        rule: "R1.3/R1.6",
+                        message: format!("command line → {cl}"),
+                    });
+                    if is_batch {
+                        // BatBadBut (R2.11): a '"' in any arg cannot be
+                        // serialized safely for a batch target — Rust's own
+                        // guard answers EINVAL-class InvalidInput here.
+                        if let Some(bad) = input.args.iter().find(|a| a.contains('"')) {
+                            notes.push(Note {
+                                layer: Layer::Serialize,
+                                severity: Severity::Fatal,
+                                rule: "R2.11",
+                                message: format!("arg {bad:?} contains a double-quote — inescapable inside cmd's batch quoting (CVE-2024-24576 class); Rust refuses the spawn outright"),
+                            });
+                            suggestions.push(Suggestion {
+                                id: "batbadbut",
+                                text: "pass the value via an environment variable or a temp file, or replace the batch target with a real binary".into(),
+                            });
+                            verdict = Verdict::UnsafeUnserializable;
+                            return Report {
+                                resolved,
+                                command_line,
+                                cmd_effective,
+                                notes,
+                                verdict,
+                                suggestions,
+                            };
+                        }
+                        let tail = cl.split_once(' ').map(|(_, t)| t).unwrap_or("");
+                        let argv = split(tail, TargetParser::Batch);
+                        let mut full = vec![path.clone()];
+                        full.extend(argv);
+                        verdict = Verdict::Runs { argv: full };
+                        return Report {
+                            resolved,
+                            command_line,
+                            cmd_effective,
+                            notes,
+                            verdict,
+                            suggestions,
+                        };
+                    }
+                    let argv = split(&cl, target);
+                    let readback: Vec<String> = argv.iter().skip(1).cloned().collect();
+                    if readback != input.args {
+                        notes.push(Note {
+                            layer: Layer::TargetParse,
+                            severity: Severity::Warn,
+                            rule: "R1.5",
+                            message: format!(
+                                "argv read-back differs under {target:?}: {readback:?} — serialization does not round-trip for this parser"
+                            ),
+                        });
+                    }
+                    verdict = Verdict::Runs { argv };
                 }
             }
         }
@@ -472,7 +735,6 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
         suggestions,
     }
 }
-
 
 /// Post-resolution reality checks: device names and reparse stubs.
 fn flag_resolved(found: &str, fs: &dyn Fs, notes: &mut Vec<Note>) {
@@ -499,9 +761,9 @@ fn is_cmd_builtin(name: &str) -> bool {
     const BUILTINS: &[&str] = &[
         "assoc", "break", "call", "cd", "chcp", "chdir", "cls", "color", "copy", "date", "del",
         "dir", "echo", "endlocal", "erase", "exit", "for", "ftype", "goto", "if", "md", "mkdir",
-        "mklink", "move", "path", "pause", "popd", "prompt", "pushd", "rd", "rem", "ren",
-        "rename", "rmdir", "set", "setlocal", "shift", "start", "time", "title", "type", "ver",
-        "verify", "vol",
+        "mklink", "move", "path", "pause", "popd", "prompt", "pushd", "rd", "rem", "ren", "rename",
+        "rmdir", "set", "setlocal", "shift", "start", "time", "title", "type", "ver", "verify",
+        "vol",
     ];
     BUILTINS.contains(&name.to_ascii_lowercase().as_str())
 }
@@ -531,8 +793,8 @@ fn first_cmd_token(s: &str) -> String {
 /// whitespace-delimited run (R0.2).
 fn first_token_r02(line: &str) -> (String, bool) {
     let t = line.trim_start();
-    if t.starts_with('"') {
-        let inner: String = t[1..].chars().take_while(|&c| c != '"').collect();
+    if let Some(rest) = t.strip_prefix('"') {
+        let inner: String = rest.chars().take_while(|&c| c != '"').collect();
         (inner, true)
     } else {
         (t.split_whitespace().next().unwrap_or("").to_string(), false)
@@ -543,15 +805,38 @@ fn first_token_r02(line: &str) -> (String, bool) {
 pub fn real_env_public() -> Env {
     let get = |k: &str| std::env::var(k).unwrap_or_default();
     Env {
-        cwd: std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default(),
-        path: get("PATH").split(';').filter(|s| !s.is_empty()).map(str::to_string).collect(),
-        pathext: get("PATHEXT").split(';').filter(|s| !s.is_empty()).map(|s| s.to_ascii_uppercase()).collect(),
-        comspec: if get("ComSpec").is_empty() { r"C:\Windows\System32\cmd.exe".into() } else { get("ComSpec") },
-        app_dir: std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.display().to_string())).unwrap_or_default(),
+        cwd: std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
+        path: get("PATH")
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        pathext: get("PATHEXT")
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_uppercase())
+            .collect(),
+        comspec: if get("ComSpec").is_empty() {
+            r"C:\Windows\System32\cmd.exe".into()
+        } else {
+            get("ComSpec")
+        },
+        app_dir: std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.display().to_string()))
+            .unwrap_or_default(),
         system32: r"C:\Windows\System32".into(),
-        windows_dir: if get("WINDIR").is_empty() { r"C:\Windows".into() } else { get("WINDIR") },
+        windows_dir: if get("WINDIR").is_empty() {
+            r"C:\Windows".into()
+        } else {
+            get("WINDIR")
+        },
         node_bat_guard: node_bat_guard_public(),
-        vars: std::env::vars().map(|(k, v)| (k.to_ascii_uppercase(), v)).collect(),
+        vars: std::env::vars()
+            .map(|(k, v)| (k.to_ascii_uppercase(), v))
+            .collect(),
         ..Env::default()
     }
 }
@@ -562,14 +847,17 @@ pub fn node_bat_guard_public() -> bool {
         return true;
     };
     let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let Some(rest) = v.strip_prefix('v') else { return true };
+    let Some(rest) = v.strip_prefix('v') else {
+        return true;
+    };
     let mut parts = rest.split('.').filter_map(|s| s.parse::<u32>().ok());
     match (parts.next(), parts.next(), parts.next()) {
-        (Some(maj), Some(min), Some(patch)) =>
+        (Some(maj), Some(min), Some(patch)) => {
             maj >= 22
                 || (maj == 21 && min >= 7 && patch >= 3)
                 || (maj == 20 && min >= 12 && patch >= 2)
-                || (maj == 18 && min >= 20 && patch >= 2),
+                || (maj == 18 && min >= 20 && patch >= 2)
+        }
         _ => true,
     }
 }
