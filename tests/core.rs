@@ -89,6 +89,36 @@ fn bare_npx_dies_enoent() {
         .any(|n| n.message.contains(r"C:\tools\nodejs\npx") && n.rule.contains("R1.14")));
 }
 
+#[test]
+fn bare_npx_reports_pathext_cmd_ignored_by_libuv() {
+    let only_cmd = VirtualFs::new()
+        .file(r"C:\tools\nodejs\npx.cmd", false)
+        .file(r"C:\tools\nodejs\node.exe", true);
+    let r = analyze(
+        &node("npx", &["-v"], Shell::None),
+        &env(),
+        &only_cmd,
+        TargetParser::Msvcrt,
+    );
+    assert!(matches!(
+        r.verdict,
+        Verdict::Dies {
+            layer: Layer::Resolve,
+            error: Error::FileNotFound
+        }
+    ));
+    assert!(
+        r.notes.iter().any(|n| {
+            let message = n.message.to_ascii_lowercase();
+            n.rule.contains("R1.14")
+                && message.contains(r"c:\tools\nodejs\npx.cmd")
+                && message.contains("pathext")
+        }),
+        "missing PATHEXT diagnostic: {:?}",
+        r.notes
+    );
+}
+
 /// R1.11: `spawn('npx.cmd')` → synchronous EINVAL (CVE-2024-27980).
 #[test]
 fn explicit_cmd_dies_einval() {

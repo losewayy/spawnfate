@@ -128,8 +128,7 @@ authoritative. See [docs/explain.md](docs/explain.md).
 MCP-capable agent. Configure once (`claude mcp add spawnfate -- spawnfate mcp`),
 and an agent can ask *“will this spawn die, and why?”* before it issues the
 call — turning ENOENT/EINVAL mysteries into a looked-up answer with a
-prescription attached. Synthetic environments (`env.files`, `env.path`)
-let it answer for machines that aren't this one. See [docs/mcp.md](docs/mcp.md).
+prescription attached. `producer` defaults to `node`; set it to `winspawn` to model Rust, `deno_task_shell`, or Go process calls. Synthetic environments (`env.files`, `env.path`) let it answer for machines that aren't this one. See [docs/mcp.md](docs/mcp.md).
 
 ## Requirements
 

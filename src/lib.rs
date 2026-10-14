@@ -107,12 +107,18 @@ pub fn analyze(input: &SpawnInput, env: &Env, fs: &dyn Fs, target: TargetParser)
                 // name, never PATHEXT.
                 let res = resolve_libuv(&input.file, env, fs);
                 for s in &res.shadowed {
+                    let detail = match crate::resolve::extension(s) {
+                        Some(ext) => {
+                            format!("libuv does not probe the .{ext} extension or use PATHEXT")
+                        }
+                        None => "libuv does not probe extensionless files".into(),
+                    };
                     notes.push(Note {
                         layer: Layer::Resolve,
                         severity: Severity::Info,
                         rule: "R1.14/R1.15",
                         message: format!(
-                            "\"{s}\" exists but is invisible to libuv's resolver (no extension, not .com/.exe) — it is NOT a candidate",
+                            "\"{s}\" exists but is invisible to libuv's resolver — {detail}; it is NOT a candidate",
                         ),
                     });
                 }

@@ -12,9 +12,14 @@ what will happen.**
 |---|---|---|
 | `file` | string (required) | program to spawn — bare name or path |
 | `args` | string[] | argv vector, pre-serialization |
-| `shell` | `"none" \| "cmd"` | `cmd` = Node `{shell:true}` (cmd re-parse) |
+| `producer` | `"node" \| "winspawn"` | process API; defaults to `node` for existing clients. `winspawn` models Rust `std::process`, `deno_task_shell`, and Go `os/exec` |
+| `shell` | `"none" \| "cmd"` | Node only: `cmd` = `{shell:true}` (cmd re-parse); use `none` with `winspawn` |
 | `target` | `"msvcrt" \| "cltavw" \| "go" \| "batch"` | spawned program's argv dialect |
 | `env` | object | optional synthetic environment — `cwd`, `path[]`, `pathext[]`, `cwd_missing`, `files[]`, `vars{}` |
+
+`producer: "node"` uses libuv's resolver and Node's Windows serialization rules. Set `producer: "winspawn"` when the caller resolves the executable through PATH+PATHEXT before calling `CreateProcess`, as Rust, `deno_task_shell`, and Go do. `shell` has no effect on this producer and must be `"none"`.
+
+For example, to model the Rust-style call `Command::new("npx").args(["-v"])`, pass `{"file":"npx","args":["-v"],"producer":"winspawn"}`. Omitting `producer` keeps the previous Node behavior.
 
 The env surface is deliberately a subset of the model's switches: the ones an
 agent asks about when it wonders "what would happen on a machine that isn't

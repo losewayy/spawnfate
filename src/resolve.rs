@@ -14,8 +14,7 @@ pub struct Resolution {
     pub found: Option<String>,
     /// Every candidate path probed, in order — shown verbatim in the report.
     pub tried: Vec<String>,
-    /// Candidates that existed but would fail at exec (non-PE, wrong kind).
-    /// Present so we can say "it *saw* the shim and skipped it".
+    /// Existing paths the resolver skips or that would fail at exec (non-PE, wrong kind); reported to explain what the resolver saw but did not use.
     pub shadowed: Vec<String>,
 }
 
@@ -31,6 +30,13 @@ fn has_ext(name: &str) -> bool {
         Some(i) => i > 0 && i < base.len() - 1,
         None => false,
     }
+}
+
+pub(crate) fn extension(name: &str) -> Option<&str> {
+    let base = name.rsplit(['\\', '/']).next().unwrap_or(name);
+    base.rsplit_once('.')
+        .filter(|(stem, ext)| !stem.is_empty() && !ext.is_empty())
+        .map(|(_, ext)| ext)
 }
 
 fn probe(dirs: &[String], candidates: Vec<String>, fs: &dyn Fs) -> Resolution {
@@ -122,11 +128,21 @@ pub fn resolve_libuv(name: &str, env: &Env, fs: &dyn Fs) -> Resolution {
                 };
             }
         }
-        // Record the extensionless shim it *didn't* even look at — the report
-        // should say "npx existed and was invisible to this resolver".
-        let bare = join(dir, name);
-        if !has_ext(name) && fs.file_exists(&bare) && !tried.contains(&bare) {
-            shadowed.push(bare);
+        // Record files that exist but libuv does not consider, including extensionless shims and PATHEXT entries such as npx.cmd.
+        if !has_ext(name) {
+            let bare = join(dir, name);
+            if fs.file_exists(&bare) && !tried.contains(&bare) {
+                shadowed.push(bare);
+            }
+            for ext in &env.pathext {
+                if ext.eq_ignore_ascii_case(".com") || ext.eq_ignore_ascii_case(".exe") {
+                    continue;
+                }
+                let candidate = join(dir, &format!("{name}{ext}"));
+                if fs.file_exists(&candidate) && !shadowed.contains(&candidate) {
+                    shadowed.push(candidate);
+                }
+            }
         }
     }
     Resolution {

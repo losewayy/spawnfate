@@ -15,8 +15,8 @@ fn tools() -> Value {
         "name": "analyze_spawn",
         "description": concat!(
             "Predict the fate of a Windows process spawn BEFORE executing it. ",
-            "Simulates name resolution (libuv/Node vs cmd.exe vs CreateProcess — ",
-            "three different resolvers), argv→command-line serialization, cmd.exe ",
+            "Simulates the selected resolver (Node/libuv or caller-resolved PATH+PATHEXT), ",
+            "argv→command-line serialization, optional cmd.exe ",
             "re-parsing, and the target program's argv parser. Reports where the ",
             "call dies or gets mangled (ENOENT/EINVAL/EFTYPE classes), the warnings ",
             "along the way, and concrete prescriptions. Use BEFORE running any ",
@@ -36,10 +36,15 @@ fn tools() -> Value {
                     "items": { "type": "string" },
                     "description": "Arguments as an argv vector (pre-serialization)"
                 },
+                "producer": {
+                    "type": "string",
+                    "enum": ["node", "winspawn"],
+                    "description": "Runtime that creates the process: node uses libuv (default); winspawn models Rust std::process, deno_task_shell, or Go os/exec"
+                },
                 "shell": {
                     "type": "string",
                     "enum": ["none", "cmd"],
-                    "description": "none = direct spawn (Node default); cmd = Node's {shell:true} → cmd.exe re-parse"
+                    "description": "Node only: none = direct spawn (default); cmd = Node's {shell:true} → cmd.exe re-parse. Use none with winspawn."
                 },
                 "target": {
                     "type": "string",
@@ -86,6 +91,7 @@ fn tools() -> Value {
 struct Args {
     file: String,
     args: Vec<String>,
+    producer: Producer,
     shell: Shell,
     target: TargetParser,
     env: Option<Env>,
@@ -118,11 +124,25 @@ fn parse_args(v: &Value) -> Result<Args, String> {
                 .collect()
         })
         .unwrap_or_default();
+    let producer = match get("producer").and_then(Value::as_str) {
+        None | Some("node") => Producer::Node,
+        Some("winspawn") => Producer::WinSpawn,
+        Some(other) => {
+            return Err(format!(
+                "unsupported producer {other:?}; expected 'node' or 'winspawn'"
+            ))
+        }
+    };
     let shell = match get("shell").and_then(Value::as_str).unwrap_or("none") {
         "cmd" => Shell::Cmd,
         "none" => Shell::None,
         other => Shell::Other(other.to_string()),
     };
+    if producer == Producer::WinSpawn && shell != Shell::None {
+        return Err(
+            "shell is only supported with producer 'node'; use shell 'none' with 'winspawn'".into(),
+        );
+    }
     let target = crate::corpus::parse_target(get("target").and_then(Value::as_str));
     let (env, files) = if let Some(e) = get("env") {
         let mut env = Env::default();
@@ -184,6 +204,7 @@ fn parse_args(v: &Value) -> Result<Args, String> {
     Ok(Args {
         file,
         args,
+        producer,
         shell,
         target,
         env,
@@ -262,7 +283,7 @@ pub fn run() -> i32 {
                                 file: a.file,
                                 args: a.args,
                                 shell: a.shell,
-                                producer: Producer::Node,
+                                producer: a.producer,
                             };
                             let report = if let Some(env) = &a.env {
                                 let mut fs = VirtualFs::new();
@@ -364,5 +385,25 @@ mod tests {
         let env = args.env.expect("env");
         assert!(env.cwd_missing);
         assert_eq!(env.cwd, "C:\\work\\gone");
+    }
+
+    #[test]
+    fn producer_defaults_to_node_for_existing_clients() {
+        let args = parse_args(&json!({"file": "npx"})).expect("parse");
+        assert_eq!(args.producer, Producer::Node);
+    }
+
+    #[test]
+    fn producer_accepts_winspawn() {
+        let args = parse_args(&json!({"file": "npx", "producer": "winspawn"})).expect("parse");
+        assert_eq!(args.producer, Producer::WinSpawn);
+    }
+
+    #[test]
+    fn winspawn_rejects_node_shell_mode() {
+        let error = parse_args(&json!({"file": "npx", "producer": "winspawn", "shell": "cmd"}))
+            .err()
+            .expect("winspawn must reject Node's shell mode");
+        assert!(error.contains("only supported with producer 'node'"));
     }
 }

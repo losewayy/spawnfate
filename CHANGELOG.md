@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- MCP `analyze_spawn` accepts `producer: "winspawn"` for Rust-style PATH+PATHEXT resolution while keeping Node as the default, and Node diagnostics identify existing PATHEXT files such as `.cmd` that libuv ignores.
+
 ## [1.0.0] — 2026-09-29
 
 - **`Producer::WinSpawn` — a fourth fate.** Models caller-resolved Windows
